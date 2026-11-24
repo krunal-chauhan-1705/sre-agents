@@ -8,6 +8,12 @@ description: How to query this cluster's Loki correctly and cheaply (labels, the
 Measured against the live stack (ai-o11y knowledge hub). Ignoring these gives empty results
 that look like "healthy", or floods of tokens.
 
+## Tool call shape
+
+`query_loki_logs` with `datasourceUid: "afsy81ikodqm8d"`, `logql`, `startRfc3339`, `endRfc3339`,
+`limit` (always set, at most 20 for lines), `queryType: "instant"` for counts, `"range"` for lines.
+Labels you need are listed below: skip `list_loki_label_names`/`analyze_loki_labels`.
+
 ## Labels
 
 - Select with `kubernetes_namespace_name` and `kubernetes_container_name`, e.g.

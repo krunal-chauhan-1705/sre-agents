@@ -28,7 +28,7 @@ CONTEXT_DIR = pathlib.Path(__file__).parent / "context"
 
 
 class FixProposal(BaseModel):
-    app: Literal["pulsar", "voyager"]
+    app: Literal["pulsar", "voyager", "grafana", "loki", "prometheus", "fluent-bit"]
     file_path: str
     change: str = Field(description='one line, e.g. "faultInjection.failEvery: 3 -> 0"')
 
@@ -96,8 +96,10 @@ def build_agent(model, fix_model, tools: list):
         subagents=[{
             "name": "fix-agent",
             "description": ("Proposes the Helm values fix as a PR on sre-gitops once the root cause "
-                            "is a value in charts/apps/pulsar or charts/apps/voyager. Give it the app, "
-                            "file, the exact key/value change and the evidence. A human approves the PR."),
+                            "is a value in one of the fixable charts: pulsar, voyager (charts/apps/) or "
+                            "grafana, loki, prometheus, fluent-bit (charts/infra/). Give it the chart, "
+                            "file, the exact key path and old -> new value, and the evidence. A human "
+                            "approves the PR."),
             "system_prompt": FIX_AGENT_PROMPT,
             "model": fix_model,
             "tools": [propose_fix_pr],

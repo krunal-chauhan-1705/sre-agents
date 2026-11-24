@@ -1,7 +1,8 @@
 """The agent's GitHub-facing tools.
 
-propose_fix_pr is the ONLY write path (SPEC §7.3, SEC-02): fixed repo, fixed path prefix,
-values files only, behind HITL. The model chooses the content; this code chooses where it
+propose_fix_pr is the ONLY write path (SPEC §7.3, SEC-02): fixed repo, an allow-list of
+charts, YAML files only, behind HITL. The agent's own charts (mcp-grafana, kubernetes-mcp,
+sre-agent) are deliberately NOT in the list: it must never be able to widen its own access. The model chooses the content; this code chooses where it
 goes. recent_changes is the read-only "what changed" lookup for diagnosis.
 """
 import base64
@@ -18,16 +19,26 @@ from langgraph.config import get_config
 
 from sre_agent.gitops import GITHUB_API, GITOPS_DIR, github_headers
 
-App = Literal["pulsar", "voyager"]
+# chart name -> chart directory in sre-gitops. Only these can be changed by a fix PR.
+CHART_DIRS = {
+    "pulsar": "charts/apps/pulsar",
+    "voyager": "charts/apps/voyager",
+    "grafana": "charts/infra/grafana",
+    "loki": "charts/infra/loki",
+    "prometheus": "charts/infra/prometheus",   # includes Alertmanager
+    "fluent-bit": "charts/infra/fluent-bit",
+}
+App = Literal["pulsar", "voyager", "grafana", "loki", "prometheus", "fluent-bit"]
 
 
 def validate_fix(app: str, file_path: str, new_content: str, root=None) -> str | None:
     """Return an error message, or None when the proposal is allowed (FX-01, FX-02)."""
     root = root or GITOPS_DIR
-    if app not in ("pulsar", "voyager"):
-        return f"app must be pulsar or voyager, got {app!r}"
-    if ".." in file_path or not re.fullmatch(rf"charts/apps/{app}/[A-Za-z0-9_./-]+\.ya?ml", file_path):
-        return f"file_path must be a YAML file under charts/apps/{app}/, got {file_path!r}"
+    if app not in CHART_DIRS:
+        return f"app must be one of {', '.join(CHART_DIRS)}, got {app!r}"
+    chart_dir = CHART_DIRS[app]
+    if ".." in file_path or not re.fullmatch(rf"{re.escape(chart_dir)}/[A-Za-z0-9_./-]+\.ya?ml", file_path):
+        return f"file_path must be a YAML file under {chart_dir}/, got {file_path!r}"
     current = root / file_path
     if not current.is_file():
         return f"{file_path} does not exist in the gitops repo"
@@ -60,9 +71,11 @@ def describe_fix(tool_call, state, runtime) -> str:
 
 @tool
 async def propose_fix_pr(app: App, file_path: str, new_content: str, title: str, body: str) -> str:
-    """Open a pull request on the GitOps repo that replaces ONE values file of pulsar or voyager.
+    """Open a pull request on the GitOps repo that replaces ONE YAML file of one chart.
 
-    file_path is relative to the repo root, e.g. charts/apps/pulsar/values.yaml.
+    app is the chart: pulsar, voyager (charts/apps/<app>/) or grafana, loki, prometheus,
+    fluent-bit (charts/infra/<app>/). file_path is relative to the repo root, e.g.
+    charts/apps/pulsar/values.yaml or charts/infra/loki/values.yaml.
     new_content is the COMPLETE new file (not a patch): copy the current file and change only
     the lines the fix needs. A human approves this call before it runs. Returns the PR URL.
     """
@@ -92,10 +105,11 @@ async def propose_fix_pr(app: App, file_path: str, new_content: str, title: str,
 
 @tool
 async def recent_changes(app: App, hours: int = 24) -> str:
-    """List commits on the GitOps repo's main branch that touched charts/apps/<app>/ in the
-    last `hours` hours (max 72), newest first, with each commit's diff for that path."""
+    """List commits on the GitOps repo's main branch that touched this chart's directory
+    (charts/apps/<app>/ or charts/infra/<app>/) in the last `hours` hours (max 72), newest
+    first, with each commit's diff for that path."""
     hours = max(1, min(hours, 72))
-    repo, path = os.environ["GITOPS_REPO"], f"charts/apps/{app}"
+    repo, path = os.environ["GITOPS_REPO"], CHART_DIRS[app]
     since = (datetime.now(UTC) - timedelta(hours=hours)).isoformat(timespec="seconds")
     async with httpx.AsyncClient(base_url=f"{GITHUB_API}/repos/{repo}", headers=github_headers(), timeout=30) as gh:
         commits = (await gh.get("/commits", params={"path": path, "since": since, "per_page": 5})).raise_for_status().json()

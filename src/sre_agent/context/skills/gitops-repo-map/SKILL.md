@@ -1,16 +1,22 @@
 ---
 name: gitops-repo-map
-description: Map a workload or alert to its ArgoCD Application, Helm chart and values file in the sre-gitops repo (/gitops/). Use when you need to know where a setting lives.
+description: Map a workload or alert to its ArgoCD Application, Helm chart, values file and exact key paths in the sre-gitops repo (/gitops/), for apps and the o11y stack. Use when you need to know where a setting lives.
 ---
 
 # sre-gitops layout (read-only under /gitops/)
 
-| Workload (ns) | ArgoCD Application | Chart dir | Values file |
+Every chart has one ArgoCD Application `apps/<chart>.yaml` with the same name as its release.
+
+| Workload (ns) | Chart (= `app` for fix-agent) | Values file | Fixable |
 |---|---|---|---|
-| pulsar (default) | `apps/pulsar.yaml` | `charts/apps/pulsar/` | `charts/apps/pulsar/values.yaml` |
-| voyager (default) | `apps/voyager.yaml` | `charts/apps/voyager/` | `charts/apps/voyager/values.yaml` |
-| loadgen (default) | `apps/loadgen.yaml` | `charts/apps/loadgen/` | not fixable by the agent |
-| grafana, loki, prometheus, fluent-bit, mcp-* (o11y) | `apps/<name>.yaml` | `charts/infra/<name>/` | not fixable by the agent |
+| pulsar (default) | `pulsar` | `charts/apps/pulsar/values.yaml` | yes |
+| voyager (default) | `voyager` | `charts/apps/voyager/values.yaml` | yes |
+| grafana (o11y) | `grafana` | `charts/infra/grafana/values.yaml` | yes |
+| loki-0 + loki-sc-rules sidecar (o11y) | `loki` | `charts/infra/loki/values.yaml`, rule in `charts/infra/loki/templates/app-error-rule.yaml` | yes |
+| prometheus-server, prometheus-alertmanager, kube-state-metrics, node-exporter (o11y) | `prometheus` | `charts/infra/prometheus/values.yaml` | yes |
+| fluent-bit DaemonSet (o11y) | `fluent-bit` | `charts/infra/fluent-bit/values.yaml` | yes |
+| loadgen (default) | `loadgen` | `charts/apps/loadgen/values.yaml` | no |
+| mcp-grafana, mcp-kubernetes (o11y), sre-agent (sre-agent) | - | - | **never**: your own tools |
 
 ## Values that matter (pulsar and voyager)
 
@@ -22,6 +28,18 @@ description: Map a workload or alert to its ArgoCD Application, Helm chart and v
 | `pulsar.serviceUrl` (voyager) | env `PULSAR_URL` | `http://pulsar:5001` |
 | `replicaCount` | Deployment replicas | `1` |
 
-Templates are in `charts/apps/<app>/templates/`; read them if you need to confirm how a value
-is rendered. Only files under `charts/apps/pulsar/` and `charts/apps/voyager/` can be changed,
-and only through `fix-agent`.
+## o11y charts: values are nested under the subchart key
+
+The infra charts wrap an upstream chart, so every value sits under its name. A key without
+that prefix is silently ignored by Helm (the fix would merge but change nothing).
+
+| Chart | Key path (known-good) |
+|---|---|
+| grafana | `grafana.resources.limits.memory` (`256Mi`), `grafana.resources.requests.memory` (`128Mi`), `grafana.persistence.size` (`2Gi`), `grafana.datasources."datasources.yaml"` (Prometheus `aftds3eabe7eoa`, Loki `afsy81ikodqm8d`) |
+| loki | `loki.singleBinary.resources.limits.memory` (`768Mi`), `loki.singleBinary.persistence.size` (`4Gi`), `loki.loki.rulerConfig.alertmanager_url` (`http://prometheus-alertmanager.o11y.svc.cluster.local:9093`), `loki.deploymentMode` (`SingleBinary`; read/write/backend replicas `0`) |
+| prometheus | `prometheus.server.resources.limits.memory` (`768Mi`), `prometheus.server.retention` (`3d`), `prometheus.alertmanager.resources.limits.memory` (`128Mi`), `prometheus.alertmanager.config` (receivers + route), `prometheus.serverFiles."alerting_rules.yml"`, `prometheus.kube-state-metrics.resources` |
+| fluent-bit | `fluent-bit.resources.limits.memory` (`128Mi`), `fluent-bit.config.outputs` (Host `loki.o11y.svc.cluster.local`, Port `3100`) |
+
+Upstream defaults live in the vendored `charts/infra/<chart>/charts/*.tgz`, which you can't
+read: if a key isn't in the wrapper's values.yaml, say so instead of guessing its default.
+Only change charts through `fix-agent`.

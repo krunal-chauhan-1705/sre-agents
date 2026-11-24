@@ -27,8 +27,9 @@ PAYLOAD = {
 
 @pytest.fixture
 def repo(tmp_path):
-    (tmp_path / "charts/apps/pulsar").mkdir(parents=True)
-    (tmp_path / "charts/apps/pulsar/values.yaml").write_text(VALUES)
+    for d in ("charts/apps/pulsar", "charts/infra/loki", "charts/infra/mcp-grafana", "charts/infra/sre-agent"):
+        (tmp_path / d).mkdir(parents=True)
+        (tmp_path / d / "values.yaml").write_text(VALUES)
     return tmp_path
 
 
@@ -49,6 +50,11 @@ def test_render_alert_is_bounded_and_complete():
     ("pulsar", "charts/apps/voyager/values.yaml", "a: 1", "under charts/apps/pulsar/"),
     ("pulsar", "charts/apps/pulsar/../../infra/x.yaml", "a: 1", "under charts/apps/pulsar/"),
     ("pulsar", "charts/infra/grafana/values.yaml", "a: 1", "under charts/apps/pulsar/"),
+    ("loki", "charts/infra/loki/values.yaml", VALUES.replace("3", "0"), None),
+    ("loki", "charts/apps/pulsar/values.yaml", "a: 1", "under charts/infra/loki/"),
+    ("mcp-grafana", "charts/infra/mcp-grafana/values.yaml", "a: 1", "app must be one of"),
+    ("sre-agent", "charts/infra/sre-agent/values.yaml", "a: 1", "app must be one of"),
+    ("kubernetes-mcp", "charts/infra/kubernetes-mcp/values.yaml", "a: 1", "app must be one of"),
     ("pulsar", "charts/apps/pulsar/templates.txt", "a: 1", "under charts/apps/pulsar/"),
     ("pulsar", "charts/apps/pulsar/missing.yaml", "a: 1", "does not exist"),
     ("pulsar", "charts/apps/pulsar/values.yaml", "a: [1", "not valid YAML"),
