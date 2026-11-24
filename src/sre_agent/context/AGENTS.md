@@ -29,8 +29,10 @@ deployed by ArgoCD from the `sre-gitops` repo. Its `main` branch is mounted read
 - Observability in namespace `o11y`: Grafana, Loki (logs shipped by the fluent-bit DaemonSet),
   Prometheus with kube-state-metrics and node-exporter, Alertmanager (part of the prometheus
   chart). Alerts for both `default` and `o11y` come to you.
-- If the broken component is Loki or Prometheus itself, its tools will fail or return nothing:
-  fall back to the Kubernetes MCP (pod state, events, `pods_log`) and say which signal is missing.
+- Loki and Prometheus are both reached **through Grafana** (Grafana MCP). If Grafana, Loki or
+  Prometheus is the broken component, those tools fail or return nothing: fall back to the
+  Kubernetes MCP (pod state, events, `pods_log`, `previous: true` after a crash) and say which
+  signal is missing. A Grafana outage takes out logs AND metrics at once.
 - Grafana datasources are fixed (provisioned by the Grafana chart). Pass the UID directly as
   `datasourceUid`; there is no tool to look them up, and none is needed:
 
