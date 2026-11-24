@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from sre_agent.gitops import GITOPS_DIR, refresh_gitops
 from sre_agent.mcp import load_tools
-from sre_agent.tools import describe_fix, propose_fix_pr, recent_changes
+from sre_agent.tools import describe_fix, propose_fix_pr, recent_changes, validate_fix_tool
 
 CONTEXT_NS = ("sre_agent", "context")
 MEMORY_NS = ("sre_agent", "memories")
@@ -50,9 +50,10 @@ SYSTEM_PROMPT = (
 )
 
 FIX_AGENT_PROMPT = (
-    "You turn a finished diagnosis into ONE minimal Helm values change and propose it with "
-    "propose_fix_pr. Follow your helm-fix-pr skill. Read the current file under /gitops/ "
-    "first; change only the keys the fix needs. Return the PR URL, or the reason no PR was opened."
+    "You turn a finished diagnosis into ONE minimal Helm values change. Follow your helm-fix-pr "
+    "skill: read the current file under /gitops/, draft the change in /drafts/, check it with "
+    "validate_fix until it is VALID, then propose it with propose_fix_pr. Change only the keys "
+    "the fix needs. Return the PR URL, or the reason no PR was opened."
 )
 
 
@@ -102,10 +103,12 @@ def build_agent(model, fix_model, tools: list):
                             "approves the PR."),
             "system_prompt": FIX_AGENT_PROMPT,
             "model": fix_model,
-            "tools": [propose_fix_pr],
+            "tools": [validate_fix_tool, propose_fix_pr],
             "skills": ["/agent/fix-skills/"],
-            # A subagent's permissions REPLACE the parent's (docs): read-only everywhere.
-            "permissions": [FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")],
+            # A subagent's permissions REPLACE the parent's (docs): read-only except its
+            # scratch drafts (thread state). First matching rule wins.
+            "permissions": [FilesystemPermission(operations=["write"], paths=["/drafts/**"], mode="allow"),
+                            FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")],
             "interrupt_on": {"propose_fix_pr": {"allowed_decisions": ["approve", "edit", "reject"],
                                                 "description": describe_fix}},
         }],

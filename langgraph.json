@@ -1,6 +1,8 @@
 {
   "python_version": "3.12",
-  "dependencies": ["."],
+  "dependencies": [
+    "."
+  ],
   "graphs": {
     "sre_agent": "./src/sre_agent/agent.py:make_graph"
   },
@@ -9,11 +11,20 @@
   },
   "webhooks": {
     "url": {
-      "allowed_domains": ["sre-agent-api-server.sre-agent.svc.cluster.local"]
+      "allowed_domains": [
+        "sre-agent-api-server.sre-agent.svc.cluster.local"
+      ]
     }
   },
   "checkpointer": {
-    "ttl": {"strategy": "delete", "default_ttl": 10080, "sweep_interval_minutes": 60}
+    "ttl": {
+      "strategy": "delete",
+      "default_ttl": 10080,
+      "sweep_interval_minutes": 60
+    }
   },
-  "env": ".env"
+  "env": ".env",
+  "dockerfile_lines": [
+    "COPY --from=alpine/helm:3.14.0 /usr/bin/helm /usr/local/bin/helm"
+  ]
 }

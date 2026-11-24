@@ -1,6 +1,7 @@
 """Pure-function and wiring tests. No network, no real model (BUD-01)."""
 import asyncio
 import json
+import shutil
 
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
@@ -12,7 +13,7 @@ from sre_agent import gitops, tools
 from deepagents.backends.utils import create_file_data
 
 from sre_agent.agent import CONTEXT_NS, DiagnosisResult, build_agent, context_files
-from sre_agent.tools import fix_diff, validate_fix
+from sre_agent.tools import check_fix, fix_diff, validate_fix
 from sre_agent.webhook import render_alert, thread_id_for
 
 VALUES = "image:\n  tag: latest\nfaultInjection:\n  failEvery: 3\n"
@@ -25,11 +26,31 @@ PAYLOAD = {
 }
 
 
+DEPLOYMENT = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+spec:
+  template:
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "pulsar:{{ .Values.image.tag }}"
+          env:
+            - name: PULSE_FAIL_EVERY
+              value: {{ .Values.faultInjection.failEvery | quote }}
+"""
+
+
 @pytest.fixture
 def repo(tmp_path):
     for d in ("charts/apps/pulsar", "charts/infra/loki", "charts/infra/mcp-grafana", "charts/infra/sre-agent"):
         (tmp_path / d).mkdir(parents=True)
         (tmp_path / d / "values.yaml").write_text(VALUES)
+    chart = tmp_path / "charts/apps/pulsar"
+    (chart / "Chart.yaml").write_text("apiVersion: v2\nname: pulsar\nversion: 0.1.0\n")
+    (chart / "templates").mkdir()
+    (chart / "templates/deployment.yaml").write_text(DEPLOYMENT)
     return tmp_path
 
 
@@ -68,6 +89,29 @@ def test_validate_fix(repo, app, path, content, error):
 def test_fix_diff_shows_the_change(repo):
     diff = fix_diff("charts/apps/pulsar/values.yaml", VALUES.replace("failEvery: 3", "failEvery: 0"), root=repo)
     assert "-  failEvery: 3" in diff and "+  failEvery: 0" in diff
+
+
+needs_helm = pytest.mark.skipif(not shutil.which("helm"), reason="helm not installed")
+PULSAR_VALUES = "charts/apps/pulsar/values.yaml"
+
+
+@needs_helm
+def test_check_fix_shows_rendered_change(repo):
+    out = check_fix("pulsar", PULSAR_VALUES, VALUES.replace("failEvery: 3", "failEvery: 0"), root=repo)
+    assert "~ Deployment/pulsar" in out and "value: '0'" in out
+
+
+@needs_helm
+def test_check_fix_rejects_change_with_no_effect(repo):
+    # The classic mistake: a key the templates never read (e.g. missing subchart nesting).
+    with pytest.raises(ValueError, match="NO EFFECT"):
+        check_fix("pulsar", PULSAR_VALUES, VALUES + "singleBinary:\n  replicas: 2\n", root=repo)
+
+
+@needs_helm
+def test_check_fix_rejects_change_that_does_not_render(repo):
+    with pytest.raises(ValueError, match="does not render"):
+        check_fix("pulsar", PULSAR_VALUES, "image: null\nfaultInjection:\n  failEvery: 0\n", root=repo)
 
 
 class FakeToolModel(GenericFakeChatModel):
@@ -114,4 +158,6 @@ def test_fix_pr_pauses_for_human_with_diff(monkeypatch, repo):
     (req,) = intr.value["action_requests"]
     assert req["name"] == "propose_fix_pr"
     assert "+  failEvery: 0" in req["description"]
+    if shutil.which("helm"):
+        assert "~ Deployment/pulsar" in req["description"]  # the human sees the rendered change
     assert intr.value["review_configs"][0]["allowed_decisions"] == ["approve", "edit", "reject"]

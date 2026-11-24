@@ -12,16 +12,24 @@ description: How to write the minimal Helm values change and the PR for it with 
 2. Build `new_content` = the current file with ONLY the keys the fix needs changed. Keep every
    other line, comment and the key order identical. Restore the known-good value (see the
    diagnosis) rather than inventing a new one.
-3. Call `propose_fix_pr` once with:
+3. In ONE turn, write the draft to `/drafts/<chart>-<file name>` (scratch, visible to the human
+   in Chat UI) and call `validate_fix` with the same arguments you will give `propose_fix_pr`.
+   - `VALID`: check the rendered change is the one you intended (right object, right field).
+   - `INVALID ... NO EFFECT`: the key path is wrong (usually missing the chart-name nesting in
+     `charts/infra/*`). Fix it and validate again.
+   - `INVALID ... does not render`: fix the YAML/values and validate again.
+   Stop after 3 failed validations and report why instead of proposing.
+4. Call `propose_fix_pr` once with exactly the validated arguments:
    - `app`: the chart: `pulsar`, `voyager`, `grafana`, `loki`, `prometheus` or `fluent-bit`
    - `file_path`: e.g. `charts/apps/pulsar/values.yaml` or `charts/infra/loki/values.yaml`
      (relative to the repo root, no `/gitops/`)
    - `new_content`: the complete file
    - `title`: `fix(<chart>): <change>`, e.g. `fix(loki): restore memory limit (128Mi -> 768Mi)`
    - `body`: the template below (the tool appends the sre-agent thread id)
-4. The human may approve, edit or reject. If rejected, report that no PR was opened, with the
+5. The human sees the values diff and the rendered Kubernetes change, then may approve,
+   edit or reject. If rejected, report that no PR was opened, with the
    reviewer's reason. Never retry a rejected proposal.
-5. Return the PR URL exactly as the tool returned it, or the reason there is none.
+6. Return the PR URL exactly as the tool returned it, or the reason there is none.
 
 ## PR body template
 
@@ -38,6 +46,9 @@ description: How to write the minimal Helm values change and the PR for it with 
 
 ## Change
 `<full.key.path>: <old> -> <new>` in `<file_path>`. Minimal: no other keys touched.
+
+## Rendered change (helm template)
+<the object and field from validate_fix, e.g. `StatefulSet/loki` memory limit 64Mi -> 768Mi>
 
 ## Rollback
 Revert this PR; ArgoCD re-syncs the previous value.

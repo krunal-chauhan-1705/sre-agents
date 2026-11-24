@@ -10,7 +10,7 @@ GitOps repo (charts, ArgoCD apps): https://github.com/krunal-chauhan-1705/sre-gi
 ```
 langgraph.json                graph sre_agent, custom routes, webhook allow-list, checkpoint TTL
 src/sre_agent/agent.py        create_deep_agent: backend routes, permissions, fix-agent subagent + HITL
-src/sre_agent/tools.py        propose_fix_pr (the only write) and recent_changes (git history)
+src/sre_agent/tools.py        validate_fix (helm template check), propose_fix_pr (the only write), recent_changes
 src/sre_agent/gitops.py       /tmp/gitops checkout from the GitHub tarball API, refreshed per run
 src/sre_agent/mcp.py          in-cluster Grafana + Kubernetes MCP servers
 src/sre_agent/webhook.py      POST /alertmanager, POST /agent-events
@@ -28,14 +28,20 @@ uv venv -p 3.12 .venv && uv pip install -p .venv/bin/python -e . pytest
 
 ## Build into minikube (no registry; the chart uses pullPolicy IfNotPresent)
 
+`langgraph build` generates the Agent Server image from `langgraph.json` (base image, this
+package, the custom routes, and `dockerfile_lines`, which adds the `helm` binary that
+`validate_fix` uses for offline rendering). Point the Docker CLI at minikube's daemon so the
+image lands straight in the cluster:
+
 ```sh
-langgraph dockerfile -c langgraph.json Dockerfile        # regenerate after langgraph.json changes
-minikube image build -t sre-agent:0.1.0 .
+eval $(minikube docker-env)
+langgraph build -t sre-agent:<tag>
 minikube image build -t sre-agent-chat-ui:0.1.0 -f Dockerfile deploy/chat-ui   # -f is relative to the context
+eval $(minikube docker-env -u)
 ```
 
-Bump the tag (and `charts/infra/sre-agent/values.yaml` in sre-gitops) for every rebuild, or
-`kubectl rollout restart` both Deployments: the same tag is never re-pulled.
+Bump the tag in `sre-gitops/charts/infra/sre-agent/values.yaml` for every rebuild: the same tag
+is never re-pulled.
 
 ## Secret (created by hand, never committed)
 
