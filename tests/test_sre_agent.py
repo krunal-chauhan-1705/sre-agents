@@ -162,18 +162,25 @@ def test_fix_pr_pauses_for_human_with_diff(monkeypatch, repo):
 
 def test_gitops_mount_follows_git_sync_symlink_swaps(tmp_path, monkeypatch):
     """git-sync layout: /git/.worktrees/<sha>/ + /git/main -> current. Reads must see new commits."""
-    from deepagents.backends import FilesystemBackend
+    from sre_agent.agent import GitSyncBackend
     for sha, every in (("aaa", 3), ("bbb", 0)):
         d = tmp_path / ".worktrees" / sha / "charts/apps/pulsar"
         d.mkdir(parents=True)
         (d / "values.yaml").write_text(f"faultInjection:\n  failEvery: {every}\n")
     (tmp_path / "main").symlink_to(".worktrees/aaa")
-    backend = FilesystemBackend(root_dir=tmp_path, virtual_mode=True)  # built once, like the graph
     monkeypatch.setattr(tools, "GITOPS_DIR", tmp_path / "main")
+    monkeypatch.setattr("sre_agent.agent.GITOPS_DIR", tmp_path / "main")
+    backend = GitSyncBackend(root_dir=tmp_path / "main", virtual_mode=True)  # built once, like the graph
 
     def read() -> str:
-        return backend.read("/main/charts/apps/pulsar/values.yaml").file_data["content"]
+        return backend.read("/charts/apps/pulsar/values.yaml").file_data["content"]
     assert "failEvery: 3" in read()
+    assert [e["path"] for e in backend.ls("/charts/apps").entries] == ["/charts/apps/pulsar/"]  # no sha paths
+    try:
+        backend.read("/../../.worktrees/aaa/charts/apps/pulsar/values.yaml")
+        raise AssertionError("traversal out of the checkout must fail")
+    except ValueError:
+        pass
 
     (tmp_path / "main.tmp").symlink_to(".worktrees/bbb")  # git-sync's atomic swap
     (tmp_path / "main.tmp").replace(tmp_path / "main")

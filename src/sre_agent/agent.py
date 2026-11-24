@@ -19,11 +19,30 @@ from langgraph_sdk.runtime import ServerRuntime
 from pydantic import BaseModel, Field
 
 from sre_agent.mcp import load_tools
-from sre_agent.tools import GITOPS_ROOT, describe_fix, propose_fix_pr, recent_changes, validate_fix_tool
+from sre_agent.tools import GITOPS_DIR, describe_fix, propose_fix_pr, recent_changes, validate_fix_tool
 
 CONTEXT_NS = ("sre_agent", "context")
 MEMORY_NS = ("sre_agent", "memories")
 CONTEXT_DIR = pathlib.Path(__file__).parent / "context"
+
+
+class GitSyncBackend(FilesystemBackend):
+    """Read-only view of the git-sync checkout whose root follows git-sync's `main` symlink.
+
+    FilesystemBackend resolves its root once (`self.cwd`). Rooted at the symlink it would pin
+    the first commit; rooted at the volume it returns resolved `.worktrees/<sha>/` paths that
+    go stale on the next sync. Re-resolving per call keeps paths `/charts/...` and current.
+    """
+
+    # ponytail: overrides the backend's `cwd` attribute (deepagents 0.7.39). Covered by
+    # test_gitops_mount_follows_git_sync_symlink_swaps; re-check on deepagents upgrades.
+    @property
+    def cwd(self):
+        return GITOPS_DIR.resolve()
+
+    @cwd.setter
+    def cwd(self, _value):
+        pass
 
 
 class FixProposal(BaseModel):
@@ -50,7 +69,7 @@ SYSTEM_PROMPT = (
 
 FIX_AGENT_PROMPT = (
     "You turn a finished diagnosis into ONE minimal Helm values change. Follow your helm-fix-pr "
-    "skill: read the current file under /gitops/main/, draft the change in /drafts/, check it with "
+    "skill: read the current file under /gitops/, draft the change in /drafts/, check it with "
     "validate_fix until it is VALID, then propose it with propose_fix_pr. Change only the keys "
     "the fix needs. Return the PR URL, or the reason no PR was opened."
 )
@@ -88,9 +107,8 @@ def build_agent(model, fix_model, tools: list):
             routes={
                 "/agent/": StoreBackend(namespace=lambda _rt: CONTEXT_NS),
                 "/memories/": StoreBackend(namespace=lambda _rt: MEMORY_NS),
-                # Root is the git-sync volume, not its `main` symlink: FilesystemBackend resolves
-                # its root once, so pointing at the symlink would pin the first commit forever.
-                "/gitops/": FilesystemBackend(root_dir=GITOPS_ROOT, virtual_mode=True),
+                # sre-gitops main, mounted read-only by the git-sync sidecar (see GitSyncBackend).
+                "/gitops/": GitSyncBackend(root_dir=GITOPS_DIR, virtual_mode=True),
             },
         ),
         permissions=readonly_repo,

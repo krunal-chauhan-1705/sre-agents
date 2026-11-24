@@ -10,7 +10,7 @@ GitOps repo (charts, ArgoCD apps): https://github.com/krunal-chauhan-1705/sre-gi
 ```
 langgraph.json                graph sre_agent, custom routes, webhook allow-list, checkpoint TTL
 src/sre_agent/agent.py        create_deep_agent: backend routes, permissions, fix-agent subagent + HITL
-                              /gitops/ = the sre-gitops repo, mounted read-only by a git-sync sidecar (chart)
+                              /gitops/ = sre-gitops main, mounted read-only by a git-sync sidecar (chart)
 src/sre_agent/tools.py        validate_fix (helm template check), propose_fix_pr (the only write), recent_changes
 src/sre_agent/mcp.py          in-cluster Grafana + Kubernetes MCP servers
 src/sre_agent/webhook.py      POST /alertmanager, POST /agent-events
