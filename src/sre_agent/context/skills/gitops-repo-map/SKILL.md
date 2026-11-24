@@ -1,9 +1,11 @@
 ---
 name: gitops-repo-map
-description: Map a workload or alert to its ArgoCD Application, Helm chart, values file and exact key paths in the sre-gitops repo (/gitops/), for apps and the o11y stack. Use when you need to know where a setting lives.
+description: Map a workload or alert to its ArgoCD Application, Helm chart, values file and exact key paths in the sre-gitops repo (/gitops/main/), for apps and the o11y stack. Use when you need to know where a setting lives.
 ---
 
-# sre-gitops layout (read-only under /gitops/)
+# sre-gitops layout (read-only under /gitops/main/)
+
+Paths below are relative to the repo root: prefix them with `/gitops/main/` to read them.
 
 Every chart has one ArgoCD Application `apps/<chart>.yaml` with the same name as its release.
 

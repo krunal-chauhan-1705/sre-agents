@@ -18,9 +18,8 @@ from langchain_openai import ChatOpenAI
 from langgraph_sdk.runtime import ServerRuntime
 from pydantic import BaseModel, Field
 
-from sre_agent.gitops import GITOPS_DIR, refresh_gitops
 from sre_agent.mcp import load_tools
-from sre_agent.tools import describe_fix, propose_fix_pr, recent_changes, validate_fix_tool
+from sre_agent.tools import GITOPS_ROOT, describe_fix, propose_fix_pr, recent_changes, validate_fix_tool
 
 CONTEXT_NS = ("sre_agent", "context")
 MEMORY_NS = ("sre_agent", "memories")
@@ -51,7 +50,7 @@ SYSTEM_PROMPT = (
 
 FIX_AGENT_PROMPT = (
     "You turn a finished diagnosis into ONE minimal Helm values change. Follow your helm-fix-pr "
-    "skill: read the current file under /gitops/, draft the change in /drafts/, check it with "
+    "skill: read the current file under /gitops/main/, draft the change in /drafts/, check it with "
     "validate_fix until it is VALID, then propose it with propose_fix_pr. Change only the keys "
     "the fix needs. Return the PR URL, or the reason no PR was opened."
 )
@@ -81,7 +80,6 @@ def build_agent(model, fix_model, tools: list):
         model=model,
         tools=[*tools, recent_changes],
         system_prompt=SYSTEM_PROMPT,
-        middleware=[refresh_gitops],
         memory=["/agent/AGENTS.md"],
         skills=["/agent/skills/"],
         response_format=ToolStrategy(DiagnosisResult),
@@ -90,7 +88,9 @@ def build_agent(model, fix_model, tools: list):
             routes={
                 "/agent/": StoreBackend(namespace=lambda _rt: CONTEXT_NS),
                 "/memories/": StoreBackend(namespace=lambda _rt: MEMORY_NS),
-                "/gitops/": FilesystemBackend(root_dir=GITOPS_DIR, virtual_mode=True),
+                # Root is the git-sync volume, not its `main` symlink: FilesystemBackend resolves
+                # its root once, so pointing at the symlink would pin the first commit forever.
+                "/gitops/": FilesystemBackend(root_dir=GITOPS_ROOT, virtual_mode=True),
             },
         ),
         permissions=readonly_repo,

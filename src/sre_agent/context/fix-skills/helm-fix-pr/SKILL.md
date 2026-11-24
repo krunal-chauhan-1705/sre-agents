@@ -5,8 +5,8 @@ description: How to write the minimal Helm values change and the PR for it with 
 
 # Propose a Helm values fix
 
-1. Read the current file: `/gitops/charts/apps/<chart>/values.yaml` for pulsar/voyager, or
-   `/gitops/charts/infra/<chart>/values.yaml` for grafana, loki, prometheus, fluent-bit.
+1. Read the current file: `/gitops/main/charts/apps/<chart>/values.yaml` for pulsar/voyager, or
+   `/gitops/main/charts/infra/<chart>/values.yaml` for grafana, loki, prometheus, fluent-bit.
    In the infra charts every value is nested under the chart name (e.g. `loki:` then
    `singleBinary:`): keep that nesting, or Helm ignores the change.
 2. Build `new_content` = the current file with ONLY the keys the fix needs changed. Keep every
@@ -22,7 +22,7 @@ description: How to write the minimal Helm values change and the PR for it with 
 4. Call `propose_fix_pr` once with exactly the validated arguments:
    - `app`: the chart: `pulsar`, `voyager`, `grafana`, `loki`, `prometheus` or `fluent-bit`
    - `file_path`: e.g. `charts/apps/pulsar/values.yaml` or `charts/infra/loki/values.yaml`
-     (relative to the repo root, no `/gitops/`)
+     (relative to the repo root, no `/gitops/main/` prefix)
    - `new_content`: the complete file
    - `title`: `fix(<chart>): <change>`, e.g. `fix(loki): restore memory limit (128Mi -> 768Mi)`
    - `body`: the template below (the tool appends the sre-agent thread id)

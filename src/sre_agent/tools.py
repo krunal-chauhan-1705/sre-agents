@@ -24,7 +24,19 @@ import yaml
 from langchain.tools import tool
 from langgraph.config import get_config
 
-from sre_agent.gitops import GITHUB_API, GITOPS_DIR, github_headers
+# The sre-gitops repo is mounted read-only by a git-sync sidecar: GITOPS_ROOT is the volume,
+# GITOPS_DIR the symlink git-sync swaps atomically to each new commit of main.
+GITOPS_ROOT = Path(os.environ.get("GITOPS_ROOT", "/git"))
+GITOPS_DIR = GITOPS_ROOT / "main"
+GITHUB_API = "https://api.github.com"
+
+
+def github_headers() -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {os.environ['GITHUB_PAT']}",  # header, never in the URL
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
 
 # chart name -> (chart directory in sre-gitops, namespace ArgoCD deploys it to).
 # Only these can be changed by a fix PR. Release name = chart name (apps/<chart>.yaml).

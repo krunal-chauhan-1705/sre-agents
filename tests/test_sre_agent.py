@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
 
-from sre_agent import gitops, tools
+from sre_agent import tools
 from deepagents.backends.utils import create_file_data
 
 from sre_agent.agent import CONTEXT_NS, DiagnosisResult, build_agent, context_files
@@ -120,9 +120,6 @@ class FakeToolModel(GenericFakeChatModel):
 
 
 def make_graph(monkeypatch, *messages):
-    async def no_refresh():
-        return None
-    monkeypatch.setattr(gitops, "refresh_checkout", no_refresh)
     model = FakeToolModel(messages=iter(messages))
     graph = build_agent(model, model, tools=[])
     graph.store = InMemoryStore()  # the Agent Server injects its Postgres store + checkpointer
@@ -161,3 +158,24 @@ def test_fix_pr_pauses_for_human_with_diff(monkeypatch, repo):
     if shutil.which("helm"):
         assert "~ Deployment/pulsar" in req["description"]  # the human sees the rendered change
     assert intr.value["review_configs"][0]["allowed_decisions"] == ["approve", "edit", "reject"]
+
+
+def test_gitops_mount_follows_git_sync_symlink_swaps(tmp_path, monkeypatch):
+    """git-sync layout: /git/.worktrees/<sha>/ + /git/main -> current. Reads must see new commits."""
+    from deepagents.backends import FilesystemBackend
+    for sha, every in (("aaa", 3), ("bbb", 0)):
+        d = tmp_path / ".worktrees" / sha / "charts/apps/pulsar"
+        d.mkdir(parents=True)
+        (d / "values.yaml").write_text(f"faultInjection:\n  failEvery: {every}\n")
+    (tmp_path / "main").symlink_to(".worktrees/aaa")
+    backend = FilesystemBackend(root_dir=tmp_path, virtual_mode=True)  # built once, like the graph
+    monkeypatch.setattr(tools, "GITOPS_DIR", tmp_path / "main")
+
+    def read() -> str:
+        return backend.read("/main/charts/apps/pulsar/values.yaml").file_data["content"]
+    assert "failEvery: 3" in read()
+
+    (tmp_path / "main.tmp").symlink_to(".worktrees/bbb")  # git-sync's atomic swap
+    (tmp_path / "main.tmp").replace(tmp_path / "main")
+    assert "failEvery: 0" in read()
+    assert "identical" in validate_fix("pulsar", "charts/apps/pulsar/values.yaml", "faultInjection:\n  failEvery: 0\n")
