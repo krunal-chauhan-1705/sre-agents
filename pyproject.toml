@@ -1,0 +1,20 @@
+[project]
+name = "sre-agent"
+version = "0.1.0"
+description = "Entry-grade SRE agent: diagnoses alerts on minikube and proposes Helm values fix PRs"
+requires-python = ">=3.12"
+dependencies = [
+  "deepagents>=0.7.39",
+  "langchain-openai>=1.6",
+  "langchain-mcp-adapters>=0.3.2",
+  "langgraph-sdk>=0.4",
+  "httpx",
+  "pyyaml",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+sre_agent = ["context/**/*.md"]

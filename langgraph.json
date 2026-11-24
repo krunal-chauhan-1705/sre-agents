@@ -1,0 +1,19 @@
+{
+  "python_version": "3.12",
+  "dependencies": ["."],
+  "graphs": {
+    "sre_agent": "./src/sre_agent/agent.py:make_graph"
+  },
+  "http": {
+    "app": "./src/sre_agent/webhook.py:app"
+  },
+  "webhooks": {
+    "url": {
+      "allowed_domains": ["sre-agent-api-server.sre-agent.svc.cluster.local"]
+    }
+  },
+  "checkpointer": {
+    "ttl": {"strategy": "delete", "default_ttl": 10080, "sweep_interval_minutes": 60}
+  },
+  "env": ".env"
+}
