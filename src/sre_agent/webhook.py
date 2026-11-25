@@ -1,4 +1,5 @@
 """Custom routes on the Agent Server (langgraph.json http.app). They run on the API pod."""
+import contextlib
 import logging
 import os
 import uuid
@@ -8,6 +9,8 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
+
+from sre_agent import slack
 
 log = logging.getLogger(__name__)
 ASSISTANT_ID = "sre_agent"
@@ -64,17 +67,30 @@ async def alertmanager(request: Request) -> JSONResponse:
                   "namespace": common.get("namespace"), "group_key": group_key},
         config={"recursion_limit": 80},  # AG-10 / BUD-02
     )
+    alert_text = "\n".join(render_alert(payload).splitlines()[:-1])  # without the instruction line
+    await slack.post_alert(tid, alert_text, ((thread or {}).get("metadata") or {}).get("slack_ts"))
     return JSONResponse({"thread_id": tid, "run_id": run["run_id"]}, status_code=202)
 
 
 async def agent_events(request: Request) -> JSONResponse:
-    """Run-completion webhook (IF-07). Slack (Phase 6) posts from here; until then a no-op."""
+    """Run-completion webhook (IF-07/08): approval card or diagnosis in the incident's Slack thread."""
     body = await request.json()
     log.info("run %s on thread %s finished: %s", body.get("run_id"), body.get("thread_id"), body.get("status"))
+    await slack.notify_run(body["thread_id"], body.get("status"))
     return JSONResponse({"ok": True})
+
+
+@contextlib.asynccontextmanager
+async def lifespan(_app):
+    handler = await slack.start()  # SL-01: no-op unless SLACK_SOCKET_MODE=true (API pod only, AS-05)
+    try:
+        yield
+    finally:
+        if handler:
+            await handler.close_async()
 
 
 app = Starlette(routes=[
     Route("/alertmanager", alertmanager, methods=["POST"]),
     Route("/agent-events", agent_events, methods=["POST"]),
-])
+], lifespan=lifespan)

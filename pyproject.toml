@@ -10,6 +10,8 @@ dependencies = [
   "langgraph-sdk>=0.4",
   "httpx",
   "pyyaml",
+  "slack-bolt>=1.30",
+  "aiohttp",          # slack-bolt async Socket Mode transport
 ]
 
 [build-system]

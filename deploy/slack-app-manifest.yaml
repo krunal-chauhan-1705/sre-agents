@@ -1,0 +1,22 @@
+# Slack app for sre_agent (spec §8.3). Create it at https://api.slack.com/apps -> Create New App ->
+# From a manifest -> paste this. Socket Mode: Slack is reached outbound, so minikube needs no
+# public URL (SEC-08). After creating: Basic Information -> App-Level Tokens -> generate one with
+# scope connections:write (SLACK_APP_TOKEN, xapp-...); Install to Workspace -> Bot User OAuth
+# Token (SLACK_BOT_TOKEN, xoxb-...); invite the bot to #sre-agent.
+display_information:
+  name: SRE Agent
+  description: Diagnoses cluster alerts and asks for approval before opening a fix PR.
+features:
+  bot_user:
+    display_name: sre-agent
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - chat:write   # incident thread, approval cards, card updates; modals need no extra scope
+settings:
+  interactivity:
+    is_enabled: true # buttons + the reject-reason modal, delivered over the socket
+  socket_mode_enabled: true
+  org_deploy_enabled: false
+  token_rotation_enabled: false

@@ -224,3 +224,78 @@ def test_plain_tool_text_flattens_mcp_text_blocks():
 
     assert asyncio.run(PlainToolText().awrap_tool_call(None, mcp_tool)).content == "a\nb"
     assert asyncio.run(PlainToolText().awrap_tool_call(None, plain_tool)).content == "already text"
+
+
+def _hitl_thread(status="interrupted"):
+    desc = "Open a PR on sre-gitops: pulsar: stop fault injection\n\nValues change:\n```diff\n" + \
+           "\n".join(f"+ line {i}" for i in range(60)) + "\n```"
+    return {"status": status, "metadata": {"slack_ts": "1.2"}, "interrupts": {"task-1": [{"id": "intr-1", "value": {
+        "action_requests": [{"name": "propose_fix_pr", "args": {"file_path": "charts/apps/pulsar/values.yaml"},
+                             "description": desc}],
+        "review_configs": [{"action_name": "propose_fix_pr", "allowed_decisions": ["approve", "edit", "reject"]}]}}]}}
+
+
+def test_slack_approval_card(monkeypatch):
+    import json
+    from sre_agent import slack
+
+    monkeypatch.setenv("CHAT_UI_URL", "http://localhost:3000")
+    it = slack.pending_interrupt(_hitl_thread())
+    blocks = slack.approval_blocks("t-1", it)
+    assert "charts/apps/pulsar/values.yaml" in blocks[0]["text"]["text"]
+    body = blocks[1]["text"]["text"]
+    assert "more lines in Chat UI" in body and body.count("```") % 2 == 0  # cut at 40 lines, fence closed
+    buttons = {b["action_id"]: json.loads(b["value"]) for b in blocks[2]["elements"]}
+    assert buttons["approve_fix"] == {"thread_id": "t-1", "interrupt_id": "intr-1"}
+    assert "threadId=t-1" in blocks[3]["elements"][0]["text"]
+    done = slack.decided_blocks(blocks, "Approved by <@U1>")
+    assert all(b["type"] != "actions" for b in done) and done[-1]["elements"][0]["text"] == "Approved by <@U1>"
+
+
+def test_slack_approvers_and_results(monkeypatch):
+    from sre_agent import slack
+
+    monkeypatch.setenv("SLACK_APPROVER_IDS", "U1, U2")
+    assert slack.is_approver("U2") and not slack.is_approver("U3")
+    assert slack.pending_interrupt({"interrupts": {}}) is None
+    thread = {"values": {"structured_response": {"summary": "s", "root_cause": "rc", "confidence": "high",
+                                                 "pr_url": "https://github.com/x/pull/1"}}}
+    assert "https://github.com/x/pull/1" in slack.result_text(thread, "success")
+    assert "error" in slack.result_text({}, "error")
+
+
+def test_slack_stale_click_is_refused_without_resuming(monkeypatch):
+    import asyncio
+    from sre_agent import slack
+
+    class FakeClient:
+        def __init__(self, thread):
+            self.threads, self.runs, self.created = self, self, []
+            self._thread = thread
+
+        async def get(self, _tid):
+            return self._thread
+
+        async def create(self, *a, **kw):
+            self.created.append(kw)
+
+    stale = FakeClient(_hitl_thread(status="idle"))  # already decided in Chat UI
+    monkeypatch.setattr(slack, "get_client", lambda: stale)
+    assert asyncio.run(slack.decide("t-1", "intr-1", {"type": "approve"}))[0] == "already decided"
+    assert stale.created == []
+
+    live = FakeClient(_hitl_thread())
+    monkeypatch.setattr(slack, "get_client", lambda: live)
+    assert asyncio.run(slack.decide("t-1", "intr-1", {"type": "approve"}))[0] is None
+    assert live.created[0]["command"] == {"resume": {"decisions": [{"type": "approve"}]}}
+    assert live.created[0]["multitask_strategy"] == "reject"
+
+
+def test_slack_is_off_without_tokens(monkeypatch):
+    import asyncio
+    from sre_agent import slack
+
+    monkeypatch.setenv("SLACK_SOCKET_MODE", "true")
+    monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
+    assert asyncio.run(slack.start()) is None and slack._app is None
+    asyncio.run(slack.post_alert("t", "x", None))  # no-op, no error (IF-07)
