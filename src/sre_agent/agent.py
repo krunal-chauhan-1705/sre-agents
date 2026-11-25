@@ -53,6 +53,9 @@ class FixProposal(BaseModel):
 
 
 class DiagnosisResult(BaseModel):
+    """Your final answer. Call it exactly once, as soon as the evidence supports one root cause
+    (or answers the person's question). Calling it ends the run."""
+
     summary: str = Field(description="1-2 sentences")
     root_cause: str
     confidence: Literal["low", "medium", "high"]
