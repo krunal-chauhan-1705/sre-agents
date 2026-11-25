@@ -31,9 +31,15 @@ def fix_pending(thread: dict | None, now: datetime) -> bool:
     return (now - updated).total_seconds() < FIX_COOLDOWN_S
 
 
-def thread_id_for(group_key: str) -> str:
-    """One thread per Alertmanager group (IF-02): repeats of the same group land together."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, group_key))
+def thread_id_for(payload: dict) -> str:
+    """One thread (and Slack thread) per incident: the alert group plus when it started firing.
+
+    groupKey alone never changes, so every future occurrence would land in the first one's
+    thread. A firing alert keeps its startsAt across notifications (repeats stay together);
+    after it resolves and fires again it gets a new startsAt, so a new incident.
+    """
+    started = min((a.get("startsAt", "") for a in payload.get("alerts", [])), default="")
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{payload['groupKey']}|{started}"))
 
 
 def render_alert(payload: dict) -> str:
@@ -60,7 +66,7 @@ async def alertmanager(request: Request) -> JSONResponse:
     if payload.get("status") != "firing":  # IF-01
         return JSONResponse({"skipped": "not firing"})
     group_key = payload["groupKey"]
-    tid = thread_id_for(group_key)
+    tid = thread_id_for(payload)
     client = get_client()  # in-process connection to this server
     try:
         thread = await client.threads.get(tid)

@@ -54,8 +54,13 @@ def repo(tmp_path):
     return tmp_path
 
 
-def test_thread_id_is_stable_per_group():
-    assert thread_id_for("g1") == thread_id_for("g1") != thread_id_for("g2")
+def test_thread_id_is_per_incident():
+    again = {**PAYLOAD, "alerts": [*PAYLOAD["alerts"], {**PAYLOAD["alerts"][0], "startsAt": "2026-11-26T10:05:00Z"}]}
+    later = {**PAYLOAD, "alerts": [{**PAYLOAD["alerts"][0], "startsAt": "2026-11-27T09:00:00Z"}]}
+    other = {**PAYLOAD, "groupKey": PAYLOAD["groupKey"] + "x"}
+    assert thread_id_for(PAYLOAD) == thread_id_for(again)  # repeat, alert added: same incident
+    assert thread_id_for(later) != thread_id_for(PAYLOAD)  # resolved, fired again: new incident
+    assert thread_id_for(other) != thread_id_for(PAYLOAD)
 
 
 def test_render_alert_is_bounded_and_complete():
