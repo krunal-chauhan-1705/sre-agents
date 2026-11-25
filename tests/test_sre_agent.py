@@ -320,9 +320,9 @@ def test_fix_pending_suppresses_rediagnosis_for_a_while():
 
     from sre_agent.webhook import fix_pending
     now = datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc)
-    t = {"updated_at": "2026-11-25T11:50:00Z", "values": {"structured_response": {"pr_url": "https://x/pull/1"}}}
+    t = {"updated_at": "2026-11-25T11:55:00Z", "values": {"structured_response": {"pr_url": "https://x/pull/1"}}}
     assert fix_pending(t, now)
-    assert not fix_pending(t, now + timedelta(minutes=30))  # still firing after cooldown: re-diagnose
+    assert not fix_pending(t, now + timedelta(minutes=5))  # 10 min after the PR, still firing: re-diagnose
     assert not fix_pending({**t, "values": {"structured_response": {"pr_url": None}}}, now)
     assert not fix_pending(None, now)
 

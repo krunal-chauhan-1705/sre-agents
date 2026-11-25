@@ -16,7 +16,7 @@ from sre_agent import slack
 log = logging.getLogger(__name__)
 ASSISTANT_ID = "sre_agent"
 MAX_ALERTS = 5
-FIX_COOLDOWN_S = 30 * 60  # after a fix PR: time to merge, let ArgoCD sync and the alert resolve
+FIX_COOLDOWN_S = 10 * 60  # after a fix PR: time to merge, let ArgoCD sync and the alert resolve
 
 
 def fix_pending(thread: dict | None, now: datetime) -> bool:
