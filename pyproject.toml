@@ -5,6 +5,7 @@ description = "Entry-grade SRE agent: diagnoses alerts on minikube and proposes 
 requires-python = ">=3.12"
 dependencies = [
   "deepagents>=0.7.39",
+  "langchain-anthropic>=1.7",
   "langchain-openai>=1.6",
   "langchain-mcp-adapters>=0.3.2",
   "langgraph-sdk>=0.4",

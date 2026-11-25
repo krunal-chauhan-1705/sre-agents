@@ -12,8 +12,8 @@ from typing import Literal
 from deepagents import FilesystemPermission, create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend, StoreBackend
 from deepagents.backends.utils import create_file_data
-from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.structured_output import ToolStrategy
+from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware, ModelFallbackMiddleware
+from langchain_anthropic import ChatAnthropic
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langgraph_sdk.runtime import ServerRuntime
@@ -53,8 +53,8 @@ class FixProposal(BaseModel):
 
 
 class DiagnosisResult(BaseModel):
-    """Your final answer. Call it exactly once, as soon as the evidence supports one root cause
-    (or answers the person's question). Calling it ends the run."""
+    """Your final answer. Give it exactly once, as soon as the evidence supports one root cause
+    (or answers the person's question). Giving it ends the run."""
 
     summary: str = Field(description="1-2 sentences")
     root_cause: str
@@ -73,6 +73,9 @@ SYSTEM_PROMPT = (
 )
 
 MODEL_CALL_DEADLINE = 120  # seconds for one whole model call, streaming included
+# Cost cap: model calls per run. A scenario takes ~15-25 main calls and ~5 fix-agent calls; a run
+# that hits the cap ends without a diagnosis (Slack says so) instead of looping on paid tokens.
+MAIN_CALL_LIMIT, FIX_CALL_LIMIT = 40, 15
 
 
 class ModelDeadline(AgentMiddleware):
@@ -113,20 +116,24 @@ def context_files() -> dict[str, str]:
     return {"/" + f.relative_to(CONTEXT_DIR).as_posix(): f.read_text() for f in sorted(CONTEXT_DIR.rglob("*.md"))}
 
 
-def chat_model(name: str) -> ChatOpenAI:
-    fallbacks = [m for m in os.environ.get("MODEL_FALLBACKS", "").split(",") if m]
-    return ChatOpenAI(
-        model=name,
-        api_key=os.environ["OPENROUTER_API_KEY"],
-        base_url="https://openrouter.ai/api/v1",
-        timeout=120,
-        max_retries=2,
-        extra_body={"models": [name, *fallbacks]} if fallbacks else None,
-    )
+def chat_model(name: str):
+    """claude-* goes to the Anthropic API (ANTHROPIC_API_KEY); anything else to OpenRouter."""
+    if name.startswith("claude-"):
+        m = ChatAnthropic(model=name, effort=os.environ.get("MODEL_EFFORT", "medium"),
+                          max_tokens=16000, timeout=120, max_retries=2)
+        # Native structured output (output_config.format): the final answer is constrained JSON
+        # and tool_choice stays auto, so the model can think. With ToolStrategy langchain forces
+        # tool_choice=any on every call, and a forced call skips thinking on Claude.
+        # ponytail: langchain's profile for claude-haiku-5-5 says structured_output=False (stale).
+        m.profile = {**(m.profile or {}), "structured_output": True}
+        return m
+    return ChatOpenAI(model=name, api_key=os.environ["OPENROUTER_API_KEY"],
+                      base_url="https://openrouter.ai/api/v1", timeout=120, max_retries=2)
 
 
-def build_agent(model, fix_model, tools: list):
+def build_agent(model, fix_model, tools: list, fallbacks: list = ()):
     """Pure wiring, no I/O: unit-tested with a fake model."""
+    fallback = [ModelFallbackMiddleware(*fallbacks)] if fallbacks else []
     readonly_repo = [FilesystemPermission(operations=["write"], paths=["/agent/**", "/gitops/**"], mode="deny")]
     return create_deep_agent(
         model=model,
@@ -134,8 +141,11 @@ def build_agent(model, fix_model, tools: list):
         system_prompt=SYSTEM_PROMPT,
         memory=["/agent/AGENTS.md"],
         skills=["/agent/skills/"],
-        response_format=ToolStrategy(DiagnosisResult),
-        middleware=[ModelDeadline(), PlainToolText()],
+        # Raw schema: langchain picks per call, native for Claude (profile above), tool-call for
+        # models without native support (the OpenRouter fallback).
+        response_format=DiagnosisResult,
+        # Outermost first: the call cap, then fallback (each model gets its own deadline).
+        middleware=[ModelCallLimitMiddleware(run_limit=MAIN_CALL_LIMIT), *fallback, ModelDeadline(), PlainToolText()],
         backend=CompositeBackend(
             default=StateBackend(),
             routes={
@@ -155,7 +165,7 @@ def build_agent(model, fix_model, tools: list):
                             "approves the PR."),
             "system_prompt": FIX_AGENT_PROMPT,
             "model": fix_model,
-            "middleware": [ModelDeadline()],
+            "middleware": [ModelCallLimitMiddleware(run_limit=FIX_CALL_LIMIT), *fallback, ModelDeadline()],
             "tools": [validate_fix_tool, propose_fix_pr],
             "skills": ["/agent/fix-skills/"],
             # A subagent's permissions REPLACE the parent's (docs): read-only except its
@@ -179,5 +189,7 @@ async def make_graph(config: RunnableConfig, runtime: ServerRuntime):
         for key, content in (await asyncio.to_thread(context_files)).items():
             await runtime.store.aput(CONTEXT_NS, key, create_file_data(content))
         model = os.environ["MODEL"]
-        _graph = build_agent(chat_model(model), chat_model(os.environ.get("FIX_MODEL") or model), await load_tools())
+        fallbacks = [chat_model(m) for m in os.environ.get("MODEL_FALLBACKS", "").split(",") if m]
+        _graph = build_agent(chat_model(model), chat_model(os.environ.get("FIX_MODEL") or model),
+                             await load_tools(), fallbacks)
     return _graph

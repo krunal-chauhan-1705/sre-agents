@@ -299,3 +299,17 @@ def test_slack_is_off_without_tokens(monkeypatch):
     monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
     assert asyncio.run(slack.start()) is None and slack._app is None
     asyncio.run(slack.post_alert("t", "x", None))  # no-op, no error (IF-07)
+
+
+def test_claude_model_uses_effort_native_output_and_fallback(monkeypatch):
+    import sre_agent.agent as agent_mod
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "x")
+    m = agent_mod.chat_model("claude-haiku-5-5")
+    assert m.profile["structured_output"] is True  # -> ProviderStrategy, tool_choice stays auto
+    assert m._get_request_payload([("user", "hi")])["output_config"] == {"effort": "medium"}
+    fb = agent_mod.chat_model("particle-ai/particle-1:free")
+    assert not (fb.profile or {}).get("structured_output")  # -> ToolStrategy for the fallback
+    graph = build_agent(m, m, tools=[], fallbacks=[fb])
+    assert graph is not None
