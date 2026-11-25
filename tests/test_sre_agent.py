@@ -209,3 +209,18 @@ def test_model_deadline_retries_once_then_gives_up(monkeypatch):
 
     with pytest.raises(TimeoutError):
         asyncio.run(agent_mod.ModelDeadline().awrap_model_call("req", always_hangs))
+
+
+def test_plain_tool_text_flattens_mcp_text_blocks():
+    import asyncio
+    from langchain_core.messages import ToolMessage
+    from sre_agent.agent import PlainToolText
+
+    async def mcp_tool(_req):
+        return ToolMessage(content=[{"type": "text", "text": "a"}, {"type": "text", "text": "b"}], tool_call_id="1")
+
+    async def plain_tool(_req):
+        return ToolMessage(content="already text", tool_call_id="2")
+
+    assert asyncio.run(PlainToolText().awrap_tool_call(None, mcp_tool)).content == "a\nb"
+    assert asyncio.run(PlainToolText().awrap_tool_call(None, plain_tool)).content == "already text"

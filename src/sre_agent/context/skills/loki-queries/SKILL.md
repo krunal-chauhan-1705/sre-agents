@@ -22,6 +22,11 @@ Call shape for `query_loki_logs`: `datasourceUid: "afsy81ikodqm8d"`, `logql`, `s
 `endRfc3339` (relative values like `"now-30m"` and `"now"` work), `limit` (always set; at most
 20 for lines), `queryType`. The default window is the last hour and the default limit is 10.
 
+## Quoting
+
+LogQL strings take **double quotes or backticks only**. Single quotes are a parse error
+(`invalid char literal`): write `{kubernetes_container_name="pulsar"}`, never `'pulsar'`.
+
 ## Labels
 
 - Select with `kubernetes_namespace_name` and `kubernetes_container_name`, e.g.

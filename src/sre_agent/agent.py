@@ -85,6 +85,18 @@ class ModelDeadline(AgentMiddleware):
         except TimeoutError:
             return await asyncio.wait_for(handler(request), MODEL_CALL_DEADLINE)
 
+
+class PlainToolText(AgentMiddleware):
+    """MCP tools return content blocks ([{"type": "text", "text": ...}]); Agent Chat UI renders
+    those as "[object Object]". Store text-only results as one plain string instead."""
+
+    async def awrap_tool_call(self, request, handler):
+        msg = await handler(request)
+        content = getattr(msg, "content", None)
+        if isinstance(content, list) and all(isinstance(b, dict) and b.get("type") == "text" for b in content):
+            msg.content = "\n".join(b["text"] for b in content)
+        return msg
+
 FIX_AGENT_PROMPT = (
     "You turn a finished diagnosis into ONE minimal Helm values change. Follow your helm-fix-pr "
     "skill: read the current file under /gitops/, draft the change in /drafts/, check it with "
@@ -120,7 +132,7 @@ def build_agent(model, fix_model, tools: list):
         memory=["/agent/AGENTS.md"],
         skills=["/agent/skills/"],
         response_format=ToolStrategy(DiagnosisResult),
-        middleware=[ModelDeadline()],
+        middleware=[ModelDeadline(), PlainToolText()],
         backend=CompositeBackend(
             default=StateBackend(),
             routes={
