@@ -12,6 +12,7 @@ from typing import Literal
 from deepagents import FilesystemPermission, create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend, StoreBackend
 from deepagents.backends.utils import create_file_data
+from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
@@ -63,9 +64,26 @@ class DiagnosisResult(BaseModel):
 
 
 SYSTEM_PROMPT = (
-    "You are sre_agent, the first responder for alerts on a Kubernetes cluster managed by "
-    "ArgoCD from the sre-gitops repo. Follow the workflow in your AGENTS.md memory."
+    "You are sre_agent, the first responder for a Kubernetes cluster managed by ArgoCD from the "
+    "sre-gitops repo. Follow your AGENTS.md memory: an alert gets the full workflow, a question "
+    "from a person gets a direct answer with as few tool calls as possible."
 )
+
+MODEL_CALL_DEADLINE = 120  # seconds for one whole model call, streaming included
+
+
+class ModelDeadline(AgentMiddleware):
+    """Caps each model call's wall-clock time, then retries once.
+
+    ChatOpenAI's `timeout` is httpx's per-read timeout: it resets on every byte, so a free-model
+    stream that stays open without finishing hung a run until BG_JOB_TIMEOUT (15 min).
+    """
+
+    async def awrap_model_call(self, request, handler):
+        try:
+            return await asyncio.wait_for(handler(request), MODEL_CALL_DEADLINE)
+        except TimeoutError:
+            return await asyncio.wait_for(handler(request), MODEL_CALL_DEADLINE)
 
 FIX_AGENT_PROMPT = (
     "You turn a finished diagnosis into ONE minimal Helm values change. Follow your helm-fix-pr "
@@ -102,6 +120,7 @@ def build_agent(model, fix_model, tools: list):
         memory=["/agent/AGENTS.md"],
         skills=["/agent/skills/"],
         response_format=ToolStrategy(DiagnosisResult),
+        middleware=[ModelDeadline()],
         backend=CompositeBackend(
             default=StateBackend(),
             routes={
@@ -121,6 +140,7 @@ def build_agent(model, fix_model, tools: list):
                             "approves the PR."),
             "system_prompt": FIX_AGENT_PROMPT,
             "model": fix_model,
+            "middleware": [ModelDeadline()],
             "tools": [validate_fix_tool, propose_fix_pr],
             "skills": ["/agent/fix-skills/"],
             # A subagent's permissions REPLACE the parent's (docs): read-only except its

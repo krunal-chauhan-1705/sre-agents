@@ -186,3 +186,26 @@ def test_gitops_mount_follows_git_sync_symlink_swaps(tmp_path, monkeypatch):
     (tmp_path / "main.tmp").replace(tmp_path / "main")
     assert "failEvery: 0" in read()
     assert "identical" in validate_fix("pulsar", "charts/apps/pulsar/values.yaml", "faultInjection:\n  failEvery: 0\n")
+
+
+def test_model_deadline_retries_once_then_gives_up(monkeypatch):
+    import asyncio
+    import sre_agent.agent as agent_mod
+
+    monkeypatch.setattr(agent_mod, "MODEL_CALL_DEADLINE", 0.05)
+    calls = []
+
+    async def hangs_first(request):
+        calls.append(request)
+        if len(calls) == 1:
+            await asyncio.sleep(1)
+        return "ok"
+
+    assert asyncio.run(agent_mod.ModelDeadline().awrap_model_call("req", hangs_first)) == "ok"
+    assert len(calls) == 2
+
+    async def always_hangs(request):
+        await asyncio.sleep(1)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(agent_mod.ModelDeadline().awrap_model_call("req", always_hangs))
