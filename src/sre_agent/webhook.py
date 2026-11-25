@@ -3,6 +3,7 @@ import contextlib
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 
 from langgraph_sdk import get_client
 from starlette.applications import Starlette
@@ -15,6 +16,19 @@ from sre_agent import slack
 log = logging.getLogger(__name__)
 ASSISTANT_ID = "sre_agent"
 MAX_ALERTS = 5
+FIX_COOLDOWN_S = 30 * 60  # after a fix PR: time to merge, let ArgoCD sync and the alert resolve
+
+
+def fix_pending(thread: dict | None, now: datetime) -> bool:
+    """The group's last run opened a fix PR recently. Alertmanager keeps notifying a firing group
+    (group_interval when its alerts change, repeat_interval otherwise); re-diagnosing before the
+    PR can take effect only repeats the same answer. Still firing after the cooldown = the fix
+    did not work, which is worth a new diagnosis."""
+    pr = (((thread or {}).get("values") or {}).get("structured_response") or {}).get("pr_url")
+    if not pr:
+        return False
+    updated = datetime.fromisoformat(thread["updated_at"].replace("Z", "+00:00"))
+    return (now - updated).total_seconds() < FIX_COOLDOWN_S
 
 
 def thread_id_for(group_key: str) -> str:
@@ -56,6 +70,9 @@ async def alertmanager(request: Request) -> JSONResponse:
         thread = None
     if thread and thread["status"] in ("busy", "interrupted"):  # IF-03: never feed a pending approval
         return JSONResponse({"skipped": thread["status"], "thread_id": tid})
+    if fix_pending(thread, datetime.now(timezone.utc)):
+        log.info("alert group %s still firing; fix PR pending, not re-diagnosing", tid)
+        return JSONResponse({"skipped": "fix pending", "thread_id": tid})
     common = payload.get("commonLabels", {})
     run = await client.runs.create(
         tid, ASSISTANT_ID,

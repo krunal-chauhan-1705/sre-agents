@@ -12,7 +12,9 @@ from typing import Literal
 from deepagents import FilesystemPermission, create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend, StoreBackend
 from deepagents.backends.utils import create_file_data
-from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware, ModelFallbackMiddleware
+import logging
+
+from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware
 from langchain_anthropic import ChatAnthropic
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
@@ -22,6 +24,7 @@ from pydantic import BaseModel, Field
 from sre_agent.mcp import load_tools
 from sre_agent.tools import GITOPS_DIR, describe_fix, propose_fix_pr, recent_changes, validate_fix_tool
 
+log = logging.getLogger(__name__)
 CONTEXT_NS = ("sre_agent", "context")
 MEMORY_NS = ("sre_agent", "memories")
 CONTEXT_DIR = pathlib.Path(__file__).parent / "context"
@@ -92,6 +95,27 @@ class ModelDeadline(AgentMiddleware):
             return await asyncio.wait_for(handler(request), MODEL_CALL_DEADLINE)
 
 
+class Fallback(AgentMiddleware):
+    """On a primary-model failure, log why and retry the call on the fallback model.
+
+    Not for 400/401/403/404: a bad request, key or model name is a config error that another model hides
+    (a 401 from Anthropic once surfaced only as the free fallback's 429).
+    """
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    async def awrap_model_call(self, request, handler):
+        try:
+            return await handler(request)
+        except Exception as e:  # noqa: BLE001
+            if getattr(e, "status_code", None) in (400, 401, 403, 404):
+                raise
+            log.warning("primary model failed, using fallback: %s: %s", type(e).__name__, str(e)[:300])
+            return await handler(request.override(model=self.model))
+
+
 class PlainToolText(AgentMiddleware):
     """MCP tools return content blocks ([{"type": "text", "text": ...}]); Agent Chat UI renders
     those as "[object Object]". Store text-only results as one plain string instead."""
@@ -133,7 +157,7 @@ def chat_model(name: str):
 
 def build_agent(model, fix_model, tools: list, fallbacks: list = ()):
     """Pure wiring, no I/O: unit-tested with a fake model."""
-    fallback = [ModelFallbackMiddleware(*fallbacks)] if fallbacks else []
+    fallback = [Fallback(fallbacks[0])] if fallbacks else []  # ponytail: first fallback only
     readonly_repo = [FilesystemPermission(operations=["write"], paths=["/agent/**", "/gitops/**"], mode="deny")]
     return create_deep_agent(
         model=model,

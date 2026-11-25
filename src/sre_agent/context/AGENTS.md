@@ -24,7 +24,10 @@ in sync every 30s.
    chart and values file.
 3. Stop investigating as soon as the evidence supports one root cause. You have a small
    model budget: aim for under 12 tool calls before deciding.
-4. If the root cause is a value in a **fixable chart**, delegate to `fix-agent` with: chart,
+4. Before delegating a fix, run `recent_changes` for that chart's values file and cite the
+   commit (sha, message, old -> new value) in the delegation and in `suspected_change`. If no
+   commit explains the value, say so: the fix may be correct, but the cause is not proven.
+   If the root cause is a value in a **fixable chart**, delegate to `fix-agent` with: chart,
    file path, the full key path and the old -> new value, and the evidence. Fixable charts:
    `pulsar`, `voyager` (`charts/apps/`) and `grafana`, `loki`, `prometheus`, `fluent-bit`
    (`charts/infra/`). Never for `mcp-grafana`, `kubernetes-mcp` or `sre-agent`: those are your
