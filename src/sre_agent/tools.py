@@ -175,10 +175,22 @@ async def validate_fix_tool(app: App, file_path: str, new_content: str) -> str:
     return "VALID. Rendered change:\n" + rendered
 
 
-def pending_for(threads: list[dict], file_path: str, own_thread: str) -> str | None:
-    """Another incident whose fix for the same file is waiting for human approval."""
+async def last_change(gh: httpx.AsyncClient, file_path: str) -> str:
+    """ISO time of the newest commit on main that touched file_path ("" if none)."""
+    commits = (await gh.get("/commits", params={"path": file_path, "sha": "main", "per_page": 1})).raise_for_status().json()
+    return commits[0]["commit"]["committer"]["date"] if commits else ""
+
+
+def api_url() -> str:
+    return os.environ.get("AGENT_EVENTS_URL", "").rsplit("/agent-events", 1)[0]
+
+
+def pending_for(threads: list[dict], file_path: str, own_thread: str, changed_at: str = "") -> str | None:
+    """Another incident whose fix for the same file is waiting for human approval. Incidents that
+    started before the file's last change on main are stale (their card holds an old file) and
+    don't count."""
     for t in threads:
-        if t["thread_id"] == own_thread:
+        if t["thread_id"] == own_thread or t.get("created_at", "") < changed_at:
             continue
         for items in (t.get("interrupts") or {}).values():
             for it in items:
@@ -197,10 +209,10 @@ async def duplicate_of(file_path: str, new_content: str) -> str | None:
                                      headers=github_headers(), timeout=30) as gh:
             if why := await already_handled(gh, file_path, new_content):
                 return why
-        api = os.environ.get("AGENT_EVENTS_URL", "").rsplit("/agent-events", 1)[0]
-        threads = await get_client(url=api).threads.search(status="interrupted", limit=50)
+            changed_at = await last_change(gh, file_path)
+        threads = await get_client(url=api_url()).threads.search(status="interrupted", limit=50)
         own = str(get_config()["configurable"]["thread_id"])
-        if other := pending_for(threads, file_path, own):
+        if other := pending_for(threads, file_path, own, changed_at):
             return f"incident {other} already has a fix for {file_path} waiting for human approval"
     except Exception:  # noqa: BLE001
         log.warning("duplicate check failed for %s", file_path, exc_info=True)
@@ -264,6 +276,12 @@ async def propose_fix_pr(app: App, file_path: str, new_content: str, title: str,
     async with httpx.AsyncClient(base_url=f"{GITHUB_API}/repos/{repo}", headers=github_headers(), timeout=30) as gh:
         if why := await already_handled(gh, file_path, new_content):
             return f"No PR opened: {why}. Report the existing fix instead of a new one."
+        # A card approved long after it was made holds the WHOLE file as it was then: if main's
+        # file changed after this incident began, opening it would silently revert those changes.
+        started = (await get_client(url=api_url()).threads.get(thread_id)).get("created_at", "")
+        if (changed := await last_change(gh, file_path)) > started:
+            return (f"No PR opened: {file_path} changed on main at {changed}, after this incident began "
+                    f"({started}). This proposal is stale; if the alert still fires, a new incident will re-diagnose.")
         main_sha = (await gh.get("/git/ref/heads/main")).raise_for_status().json()["object"]["sha"]
         r = await gh.post("/git/refs", json={"ref": f"refs/heads/{branch}", "sha": main_sha})
         if r.status_code == 422:  # branch exists: a retry of this thread's proposal (FX-04)

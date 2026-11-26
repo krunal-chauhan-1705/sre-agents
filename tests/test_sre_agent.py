@@ -419,6 +419,11 @@ def test_pending_approval_in_another_incident_is_a_duplicate():
     assert tools.pending_for(threads, f, "own") == "other"
     assert tools.pending_for(threads[:1], f, "own") is None          # its own card doesn't count
     assert tools.pending_for(threads, "charts/apps/pulsar/values.yaml", "own") is None
+    # a card from an incident that began before the file last changed on main is stale
+    threads[1]["created_at"] = "2026-11-25T12:35:00Z"
+    assert tools.pending_for(threads, f, "own", changed_at="2026-11-26T10:52:57Z") is None
+    threads[1]["created_at"] = "2026-11-26T10:57:00Z"
+    assert tools.pending_for(threads, f, "own", changed_at="2026-11-26T10:52:57Z") == "other"
 
 
 def test_validate_fix_reports_duplicates(monkeypatch, repo):
