@@ -17,6 +17,12 @@ in sync every 30s.
 
 ## Workflow (every alert)
 
+Alerts come from **every namespace and the node** (node, workload, storage, control-plane,
+monitoring-pipeline and Kubernetes-event alerts). Diagnose all of them; only fixable charts
+(step 4) get a PR. For everything else (node resources, `kube-system`, `argocd`, `sre-agent`, a
+PVC) give the root cause and the exact human action instead.
+
+
 1. `ls /memories/incidents/` and read any note about the same app or alert: past root causes
    are the fastest lead.
 2. Follow the `diagnose-workload` skill: workload state (Prometheus) -> events (Loki) -> logs

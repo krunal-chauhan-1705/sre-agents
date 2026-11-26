@@ -46,17 +46,20 @@ def render_alert(payload: dict) -> str:
     """Alertmanager webhook v4 -> the task message for the agent (IF-06)."""
     common = payload.get("commonLabels", {})
     lines = [f"Alertmanager group {payload.get('status', '?').upper()}: "
-             f"{common.get('alertname', '?')} in namespace {common.get('namespace', '?')}."]
+             f"{common.get('alertname', '?')} "
+             + (f"in namespace {common['namespace']}." if common.get("namespace") else "(cluster-wide).")]
     alerts = payload.get("alerts", [])
     for a in alerts[:MAX_ALERTS]:
         lb, an = a.get("labels", {}), a.get("annotations", {})
-        where = "/".join(x for x in (lb.get("pod") or lb.get("deployment") or lb.get("kubernetes_container_name"),
-                                     lb.get("container")) if x)
+        obj = next((lb[k] for k in ("pod", "deployment", "statefulset", "daemonset", "persistentvolumeclaim",
+                                    "persistentvolume", "job_name", "node", "instance", "name",
+                                    "kubernetes_container_name") if lb.get(k)), None)
+        where = "/".join(x for x in (obj, lb.get("container"), lb.get("reason")) if x)
         text = " - ".join(x for x in (an.get("summary"), an.get("description")) if x)
         lines.append(f"- {lb.get('alertname', '?')} [{a.get('status', '?')}] {where or 'n/a'} since {a.get('startsAt', '?')}: {text}")
     if len(alerts) > MAX_ALERTS:
         lines.append(f"- ... and {len(alerts) - MAX_ALERTS} more alerts in this group")
-    lines.append("Diagnose the root cause. If it is a Helm values problem in pulsar or voyager, "
+    lines.append("Diagnose the root cause. If it is a Helm values problem in a fixable chart, "
                  "hand the fix to fix-agent.")
     return "\n".join(lines)
 

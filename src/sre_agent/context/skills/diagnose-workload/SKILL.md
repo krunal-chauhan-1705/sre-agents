@@ -53,6 +53,20 @@ shortly before the alert's `startsAt` that changes a related value is the prime 
 diff also gives the previous, working value (e.g. the old Secret name or image tag). Read the
 current values file (paths in `gitops-repo-map`).
 
+## Cluster, node and event alerts
+
+| Alert | First query |
+|---|---|
+| `NodeMemoryHigh` / `NodeCPUHigh` | top consumers: `topk(5, max by (namespace,pod) (container_memory_working_set_bytes{pod!=""}))` or `topk(5, max by (namespace,pod) (rate(container_cpu_usage_seconds_total{pod!=""}[5m])))` |
+| `NodeDiskSpaceLow` / `NodeDiskFillingIn6h` | `min by (mountpoint) (node_filesystem_avail_bytes{fstype="ext4"} / node_filesystem_size_bytes{fstype="ext4"})`. On minikube the usual cause is old container images (`docker image prune` / `minikube image rm`): a human action, never a PR |
+| `NodeNotReady`, `NodePressure`, `NodeUnschedulable` | `max by (condition,status) (kube_node_status_condition == 1)`, then node events: `{job="k8s-events", involvedObject_kind="Node"}` |
+| `KubeWarningEvents` | the alert's `reason` and `namespace`: list those events (step 2) with `reason="<reason>"` |
+| `PodProbeFailures` / `PodNotReady` | probe events in the namespace (`reason="Unhealthy"`): which pod, liveness or readiness, timeout or HTTP error |
+| `ArgoCDAppProblem` | `{job="k8s-events", involvedObject_kind="Application"} \|= "<app>"`: the last health/sync messages, then `recent_changes` for that chart |
+| `TargetDown`, `KubeStateMetricsMissing`, `PrometheusRuleFailures` | the monitoring pipeline is the broken component: say which alerts are blind until it is back |
+| `PersistentVolumeClaimPending` / `PersistentVolumeFailed` | events for the PVC (`involvedObject_kind="PersistentVolumeClaim"`): storage class, provisioning errors |
+| `StatefulSetReplicasMismatch`, `DaemonSetUnavailable`, `DeploymentRolloutStuck`, `PodFailedOrEvicted`, `JobFailed` | step 1 state queries for that namespace, then step 2 events |
+
 ## Cross-service rule
 
 voyager returning 503 usually means **pulsar** is failing (voyager calls it on every
