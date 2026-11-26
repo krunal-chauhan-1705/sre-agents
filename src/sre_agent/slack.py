@@ -78,9 +78,10 @@ def result_text(thread: dict, run_status: str | None) -> str:
     r = (thread.get("values") or {}).get("structured_response") or {}
     if not r:
         return ":grey_question: The run finished without a diagnosis."
-    pr = f"\n*PR:* {r['pr_url']}" if r.get("pr_url") else ""
-    return (f":mag: *Diagnosis* ({r.get('confidence', '?')} confidence)\n{r.get('summary', '')}\n"
-            f"*Root cause:* {r.get('root_cause', '')}{pr}")
+    url = r.get("pr_url") or ""
+    pr = f"\n:link: *Fix PR:* <{url}|#{url.rstrip('/').rsplit('/', 1)[-1]} on GitHub>" if url else ""
+    return (f":mag: *Diagnosis* ({r.get('confidence', '?')} confidence){pr}\n{r.get('summary', '')}\n"
+            f"*Root cause:* {r.get('root_cause', '')}")
 
 
 async def post_alert(thread_id: str, text: str, slack_ts: str | None) -> None:

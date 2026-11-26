@@ -265,7 +265,7 @@ def test_slack_approvers_and_results(monkeypatch):
     assert slack.pending_interrupt({"interrupts": {}}) is None
     thread = {"values": {"structured_response": {"summary": "s", "root_cause": "rc", "confidence": "high",
                                                  "pr_url": "https://github.com/x/pull/1"}}}
-    assert "https://github.com/x/pull/1" in slack.result_text(thread, "success")
+    assert "<https://github.com/x/pull/1|#1 on GitHub>" in slack.result_text(thread, "success")
     assert "error" in slack.result_text({}, "error")
 
 
@@ -353,3 +353,48 @@ def test_fallback_logs_and_switches_but_not_on_config_errors():
     assert asyncio.run(fb.awrap_model_call(Req("primary"), handler_failing(429))) == "fallback"
     with pytest.raises(Err):
         asyncio.run(fb.awrap_model_call(Req("primary"), handler_failing(401)))
+
+
+def fake_github(open_prs, pr_files, main_content, calls):
+    import base64
+
+    import httpx
+
+    def handle(req):
+        calls.append((req.method, req.url.path))
+        p = req.url.path
+        if p.endswith("/contents/charts/infra/fluent-bit/values.yaml"):
+            return httpx.Response(200, json={"content": base64.b64encode(main_content.encode()).decode()})
+        if p.endswith("/pulls") and req.method == "GET":
+            return httpx.Response(200, json=open_prs)
+        if p.endswith("/files"):
+            return httpx.Response(200, json=pr_files)
+        if p.endswith("/requested_reviewers"):
+            return httpx.Response(201, json={})
+        if p.endswith("/assignees"):
+            return httpx.Response(201, json={})
+        return httpx.Response(404)
+    return httpx.AsyncClient(base_url="https://api.github.com/repos/o/r", transport=httpx.MockTransport(handle))
+
+
+def test_duplicate_fix_prs_are_not_opened():
+    f = "charts/infra/fluent-bit/values.yaml"
+    pr = {"number": 4, "html_url": "https://github.com/o/r/pull/4", "head": {"ref": "sre-agent/fluent-bit-1"}}
+    calls = []
+    # main already fixed by another incident's PR
+    assert "main already has" in asyncio.run(tools.already_handled(fake_github([], [], "fixed\n", calls), f, "fixed\n"))
+    # another incident's PR for the same file is still open
+    why = asyncio.run(tools.already_handled(fake_github([pr], [{"filename": f}], "broken\n", calls), f, "fixed\n"))
+    assert why.startswith("PR #4 already open")
+    # unrelated open PR: go ahead
+    assert asyncio.run(tools.already_handled(fake_github([pr], [{"filename": "other"}], "broken\n", calls), f, "fixed\n")) is None
+
+
+def test_reviewer_is_assigned_and_requested_unless_author(monkeypatch):
+    monkeypatch.setenv("PR_REVIEWERS", "alice")
+    calls = []
+    gh = fake_github([], [], "", calls)
+    assert "review requested alice" in asyncio.run(tools.add_reviewers(gh, {"number": 5, "user": {"login": "bot"}}))
+    calls.clear()
+    out = asyncio.run(tools.add_reviewers(gh, {"number": 5, "user": {"login": "Alice"}}))  # PAT owner = reviewer
+    assert "assigned alice" in out and not any(p.endswith("/requested_reviewers") for _, p in calls)
