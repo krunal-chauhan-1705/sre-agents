@@ -22,7 +22,7 @@ labels first; these are known. Replace the namespace.
 | Memory limit | `max by (pod,container) (kube_pod_container_resource_limits{namespace="o11y",resource="memory"})` |
 | Pod phase | `max by (pod,phase) (kube_pod_status_phase{namespace="o11y"} == 1)` |
 | Not ready | `max by (pod,container) (kube_pod_container_status_ready{namespace="o11y"} == 0)` |
-| Memory used vs limit (cAdvisor is per **pod** here: select `pod=~"pulsar-.*"`, no `container` label) | `max by (pod) (container_memory_working_set_bytes{namespace="default",pod=~"pulsar-.*"}) / max by (pod) (kube_pod_container_resource_limits{namespace="default",resource="memory",container="pulsar"})` |
+| Memory used vs limit (cAdvisor is per **pod** here: select by `pod`, no `container` label) | `max by (pod) (container_memory_working_set_bytes{namespace="default",pod=~"pulsar-.*"}) / max by (pod) (kube_pod_container_resource_limits{namespace="default",resource="memory",container="pulsar"})` |
 | CPU cores used (no CPU limits are set; request is 0.01) | `max by (pod) (rate(container_cpu_usage_seconds_total{namespace="default",pod=~"pulsar-.*"}[5m]))` |
 | Replicas short | `max by (deployment) (kube_deployment_spec_replicas{namespace="o11y"} - kube_deployment_status_replicas_available{namespace="o11y"}) > 0`; DaemonSets: `max by (daemonset) (kube_daemonset_status_number_unavailable{namespace="o11y"}) > 0` |
 
@@ -79,8 +79,8 @@ blaming voyager.
 |---|---|
 | Tracebacks / 500s in pulsar, 503s in voyager | `faultInjection.failEvery` in pulsar values |
 | OOMKilled, CrashLoopBackOff | `resources.limits.memory` |
-| `AppMemoryHigh` (>85% of limit, not yet OOMKilled) | a leak or a too-tight `resources.limits.memory`; check the trend over the last hours before raising the limit |
-| `AppCPUHigh` (>0.2 cores for 10m, normal ~0.005) | a traffic spike (loadgen) or a hot loop; logs around the start; no CPU limit to fix in values |
+| `PodMemoryNearLimit` (any pod >90% of its memory limit for 5m) | a leak or a too-tight `resources.limits.memory`; check the trend (`max_over_time(...[6h])`) before raising the limit. For a fixable chart, raising the limit is a valid PR |
+| `PodCPUHigh` (any pod >0.75 cores for 15m, info) | a traffic spike or a hot loop: logs around the start. Only the agent's own pods have CPU limits, so there is usually no value to fix |
 | ImagePullBackOff / ErrImagePull | `image.tag` vs `image_spec` (only `latest` exists for the apps) |
 | CreateContainerConfigError | a Secret/ConfigMap name in values; the event says which one is missing |
 | o11y pod OOMKilled / CrashLoopBackOff | that chart's `resources.limits.memory` (key paths in `gitops-repo-map`) |
