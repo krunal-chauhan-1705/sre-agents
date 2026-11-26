@@ -398,3 +398,13 @@ def test_reviewer_is_assigned_and_requested_unless_author(monkeypatch):
     calls.clear()
     out = asyncio.run(tools.add_reviewers(gh, {"number": 5, "user": {"login": "Alice"}}))  # PAT owner = reviewer
     assert "assigned alice" in out and not any(p.endswith("/requested_reviewers") for _, p in calls)
+
+
+def test_priority_drives_the_instructions():
+    from sre_agent.webhook import priority
+    info = {**PAYLOAD, "alerts": [{**a, "labels": {**a["labels"], "severity": "info"}} for a in PAYLOAD["alerts"]]}
+    mixed = {**PAYLOAD, "alerts": [*info["alerts"], {**PAYLOAD["alerts"][0], "labels": {"severity": "critical"}}]}
+    assert priority(info) == "info" and priority(mixed) == "critical" and priority({"alerts": []}) == "warning"
+    text = render_alert(info)
+    assert "Priority: info." in text and "Do NOT delegate to fix-agent" in text
+    assert "hand the fix to fix-agent" in render_alert(mixed)

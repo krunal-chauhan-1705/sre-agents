@@ -84,7 +84,7 @@ def result_text(thread: dict, run_status: str | None) -> str:
             f"*Root cause:* {r.get('root_cause', '')}")
 
 
-async def post_alert(thread_id: str, text: str, slack_ts: str | None) -> None:
+async def post_alert(thread_id: str, text: str, slack_ts: str | None, icon: str = ":rotating_light:") -> None:
     """SL-02: a new incident gets a root message (its ts saved as thread metadata `slack_ts`);
     a repeat of the same alert group replies in the existing Slack thread."""
     if _app is None:
@@ -95,7 +95,7 @@ async def post_alert(thread_id: str, text: str, slack_ts: str | None) -> None:
             await _app.client.chat_postMessage(channel=channel, thread_ts=slack_ts, text=f":repeat: Firing again\n{text}")
             return
         link = chat_ui_link(thread_id)
-        r = await _app.client.chat_postMessage(channel=channel, text=f":rotating_light: {text}" + (f"\n{link}" if link else ""))
+        r = await _app.client.chat_postMessage(channel=channel, text=f"{icon} {text}" + (f"\n{link}" if link else ""))
         await get_client().threads.update(thread_id, metadata={"slack_ts": r["ts"]})
     except Exception:  # noqa: BLE001 - Slack trouble must never block the alert run
         log.exception("Slack: could not post alert for thread %s", thread_id)

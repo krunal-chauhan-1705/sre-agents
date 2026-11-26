@@ -16,6 +16,14 @@ from sre_agent import slack
 log = logging.getLogger(__name__)
 ASSISTANT_ID = "sre_agent"
 MAX_ALERTS = 5
+SEVERITIES = ("critical", "warning", "info")  # alert rule `severity` label = the incident's priority
+ICONS = {"critical": ":rotating_light:", "warning": ":warning:", "info": ":information_source:"}
+
+
+def priority(payload: dict) -> str:
+    """The group's highest severity; an unlabelled alert counts as warning."""
+    found = {a.get("labels", {}).get("severity", "warning") for a in payload.get("alerts", [])} or {"warning"}
+    return next((s for s in SEVERITIES if s in found), "warning")
 FIX_COOLDOWN_S = 10 * 60  # after a fix PR: time to merge, let ArgoCD sync and the alert resolve
 
 
@@ -47,7 +55,8 @@ def render_alert(payload: dict) -> str:
     common = payload.get("commonLabels", {})
     lines = [f"Alertmanager group {payload.get('status', '?').upper()}: "
              f"{common.get('alertname', '?')} "
-             + (f"in namespace {common['namespace']}." if common.get("namespace") else "(cluster-wide).")]
+             + (f"in namespace {common['namespace']}." if common.get("namespace") else "(cluster-wide).")
+             + f" Priority: {priority(payload)}."]
     alerts = payload.get("alerts", [])
     for a in alerts[:MAX_ALERTS]:
         lb, an = a.get("labels", {}), a.get("annotations", {})
@@ -59,8 +68,12 @@ def render_alert(payload: dict) -> str:
         lines.append(f"- {lb.get('alertname', '?')} [{a.get('status', '?')}] {where or 'n/a'} since {a.get('startsAt', '?')}: {text}")
     if len(alerts) > MAX_ALERTS:
         lines.append(f"- ... and {len(alerts) - MAX_ALERTS} more alerts in this group")
-    lines.append("Diagnose the root cause. If it is a Helm values problem in a fixable chart, "
-                 "hand the fix to fix-agent.")
+    if priority(payload) == "info":
+        lines.append("Priority info: quick triage only (at most 4 tool calls). Do NOT delegate to fix-agent "
+                     "and do not open a PR. Say whether a human needs to act, and when.")
+    else:
+        lines.append("Diagnose the root cause. If it is a Helm values problem in a fixable chart, "
+                     "hand the fix to fix-agent.")
     return "\n".join(lines)
 
 
@@ -89,12 +102,13 @@ async def alertmanager(request: Request) -> JSONResponse:
         if_not_exists="create",
         multitask_strategy="reject",
         webhook=os.environ.get("AGENT_EVENTS_URL"),
-        metadata={"source": "alertmanager", "alertname": common.get("alertname"),
+        metadata={"source": "alertmanager", "alertname": common.get("alertname"), "priority": priority(payload),
                   "namespace": common.get("namespace"), "group_key": group_key},
         config={"recursion_limit": 80},  # AG-10 / BUD-02
     )
     alert_text = "\n".join(render_alert(payload).splitlines()[:-1])  # without the instruction line
-    await slack.post_alert(tid, alert_text, ((thread or {}).get("metadata") or {}).get("slack_ts"))
+    await slack.post_alert(tid, alert_text, ((thread or {}).get("metadata") or {}).get("slack_ts"),
+                           ICONS[priority(payload)])
     return JSONResponse({"thread_id": tid, "run_id": run["run_id"]}, status_code=202)
 
 

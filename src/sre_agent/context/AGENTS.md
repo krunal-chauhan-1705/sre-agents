@@ -15,7 +15,18 @@ in sync every 30s.
   - Return the structured result with `summary` = the answer, `root_cause` = the short answer
     (or "n/a"), the evidence you used, and `fix`/`pr_url`/`suspected_change` null.
 
-## Workflow (every alert)
+## Priority
+
+The alert message states the group's priority (the alert rule's `severity`):
+
+- **critical** (users affected now, or alerting is blind) and **warning** (broken or degraded):
+  the full workflow below, including a fix PR when the cause is in a fixable chart.
+- **info** (an early signal, safe to skip: trends, housekeeping events, probe noise): quick
+  triage only, at most 4 tool calls. Never delegate to `fix-agent`, never open a PR, skip the
+  incident note. Answer: is it real, does a human need to act, and by when. If triage shows
+  real breakage, say so and recommend the matching critical/warning alert, but still no PR.
+
+## Workflow (every critical or warning alert)
 
 Alerts come from **every namespace and the node** (node, workload, storage, control-plane,
 monitoring-pipeline and Kubernetes-event alerts). Diagnose all of them; only fixable charts
