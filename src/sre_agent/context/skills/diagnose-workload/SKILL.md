@@ -1,26 +1,55 @@
 ---
 name: diagnose-workload
-description: Step order for diagnosing an alert on a workload in namespace default or o11y (pod state, events, logs, metrics, recent git changes). Use for every alert.
+description: Step order and ready-made queries for diagnosing an alert on a workload in namespace default or o11y (workload state from kube-state-metrics, Kubernetes events and logs from Loki, recent git changes). Use for every alert.
 ---
 
 # Diagnose a workload
 
-Go in this order and stop once one root cause explains the alert.
+Everything goes through the Grafana MCP. Go in this order and stop once one root cause explains
+the alert. Prometheus: `query_prometheus`, `datasourceUid: "aftds3eabe7eoa"`, `queryType:
+"instant"`, `endTime: "now"`. Loki: `query_loki_logs`, `datasourceUid: "afsy81ikodqm8d"`.
 
-1. **Pod state** (Kubernetes MCP): list pods in the alert's namespace (`default` or `o11y`). Note status, restarts,
-   `lastState.terminated.reason` (e.g. `OOMKilled`), waiting reason (e.g. `ImagePullBackOff`).
-2. **Events** (Kubernetes MCP): events in that namespace for the pod and its owner. Pull errors,
-   probe failures and OOM kills show up here first.
-3. **Logs** (Grafana MCP, Loki): follow `loki-queries`. Count errors first, then fetch at most
-   20 lines of the one container that matters.
-4. **Metrics** (Grafana MCP `query_prometheus`, `datasourceUid: "aftds3eabe7eoa"`,
-   `queryType: "instant"`, `endTime: "now"`) only if 1-3 are inconclusive. The metric names
-   below are known: don't list metric names or labels first. e.g.
-   `kube_pod_container_resource_limits{namespace="default",resource="memory"}` or
-   `increase(kube_pod_container_status_restarts_total{namespace="default"}[30m])`.
-5. **What changed**: `recent_changes(<chart>)` lists the commits to that chart's directory with
-   diffs. A commit shortly before the alert's `startsAt` that changes a related value is the
-   prime suspect. Read the current values file (paths in `gitops-repo-map`).
+## 1. Workload state (Prometheus, kube-state-metrics)
+
+Always wrap in `max by (...)`: raw series carry ~15 noise labels. Don't list metric names or
+labels first; these are known. Replace the namespace.
+
+| Question | PromQL |
+|---|---|
+| Who is stuck or crashed, and why | `max by (pod,container,reason) (kube_pod_container_status_waiting_reason{namespace="o11y"} == 1) or max by (pod,container,reason) (kube_pod_container_status_last_terminated_reason{namespace="o11y"} == 1)` |
+| Restarts | `max by (pod,container) (increase(kube_pod_container_status_restarts_total{namespace="o11y"}[30m])) > 0` |
+| Running image (wrong tag?) | `max by (pod,container,image_spec) (kube_pod_container_info{namespace="o11y"})` |
+| Memory limit | `max by (pod,container) (kube_pod_container_resource_limits{namespace="o11y",resource="memory"})` |
+| Pod phase | `max by (pod,phase) (kube_pod_status_phase{namespace="o11y"} == 1)` |
+| Not ready | `max by (pod,container) (kube_pod_container_status_ready{namespace="o11y"} == 0)` |
+| Replicas short | `max by (deployment) (kube_deployment_spec_replicas{namespace="o11y"} - kube_deployment_status_replicas_available{namespace="o11y"}) > 0`; DaemonSets: `max by (daemonset) (kube_daemonset_status_number_unavailable{namespace="o11y"}) > 0` |
+
+The first query is usually enough: `ImagePullBackOff`, `CreateContainerConfigError`,
+`CrashLoopBackOff`, `OOMKilled` name the failure class. Waiting series only exist while a
+container is waiting, so an empty result means none is.
+
+## 2. Events (Loki, `job="k8s-events"`)
+
+Events carry the exact error text: `secret "x" not found`, `manifest unknown`, probe failures,
+failed scheduling, OOM kills. Warnings for the namespace, newest first, at most 20:
+
+`{job="k8s-events", involvedObject_namespace="o11y", type="Warning"} | json | line_format "{{.lastTimestamp}} {{.involvedObject_kind}}/{{.involvedObject_name}} {{.reason}} x{{.count}}: {{.message}}"`
+
+Narrow with `|= "<pod or deployment name>"`. ArgoCD's sync events are in namespace `argocd`
+(`involvedObject_kind="Application"`): they show when a commit reached the cluster.
+If fluent-bit or Loki is the broken component, there are no new events: skip to step 4.
+
+## 3. Logs (Loki, `job="fluentbit"`)
+
+Follow `loki-queries`: count errors first, then at most 20 lines of the one container that
+matters. Skip for config/image failures where the container never started (no logs exist).
+
+## 4. What changed
+
+`recent_changes(<chart>)` lists the commits to that chart's directory with diffs. A commit
+shortly before the alert's `startsAt` that changes a related value is the prime suspect. The
+diff also gives the previous, working value (e.g. the old Secret name or image tag). Read the
+current values file (paths in `gitops-repo-map`).
 
 ## Cross-service rule
 
@@ -34,7 +63,8 @@ blaming voyager.
 |---|---|
 | Tracebacks / 500s in pulsar, 503s in voyager | `faultInjection.failEvery` in pulsar values |
 | OOMKilled, CrashLoopBackOff | `resources.limits.memory` |
-| ImagePullBackOff / ErrImagePull | `image.tag` (only `latest` exists locally) |
+| ImagePullBackOff / ErrImagePull | `image.tag` vs `image_spec` (only `latest` exists for the apps) |
+| CreateContainerConfigError | a Secret/ConfigMap name in values; the event says which one is missing |
 | o11y pod OOMKilled / CrashLoopBackOff | that chart's `resources.limits.memory` (key paths in `gitops-repo-map`) |
-| o11y pod Pending | requests too high for the node, or a PVC that can't bind |
-| Loki/Grafana/Prometheus crash right after a commit | a config value in that chart's values.yaml; read the pod's last log lines |
+| o11y pod Pending | requests too high for the node, or a PVC that can't bind; the event says which |
+| Loki/Grafana/Prometheus crash right after a commit | a config value in that chart's values.yaml; its last log lines |

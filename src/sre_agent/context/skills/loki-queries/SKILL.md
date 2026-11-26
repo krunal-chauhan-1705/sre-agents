@@ -1,6 +1,6 @@
 ---
 name: loki-queries
-description: How to query this cluster's Loki correctly and cheaply through the Grafana MCP (tools, labels, the ANSI status-code trap, double-encoded lines, health-check noise, what to do when Grafana/Loki is down). Use before any Loki query.
+description: How to query this cluster's Loki correctly and cheaply through the Grafana MCP (container logs and Kubernetes events, labels, the ANSI status-code trap, health-check noise, what to do when Grafana/Loki/fluent-bit is down). Use before any Loki query.
 ---
 
 # Loki queries on this cluster
@@ -33,7 +33,10 @@ LogQL strings take **double quotes or backticks only**. Single quotes are a pars
   `{kubernetes_namespace_name="default", kubernetes_container_name="pulsar"}`.
   Containers: `default` has pulsar, voyager, loadgen; `o11y` has grafana, loki,
   prometheus-server, alertmanager, fluent-bit, kube-state-metrics.
-- `job` and `service_name` are always `fluentbit`: never select on them.
+- Two streams: `job="fluentbit"` (container logs) and `job="k8s-events"` (Kubernetes events,
+  labels `involvedObject_namespace`, `involvedObject_kind`, `type`, `reason`; query recipe in
+  `diagnose-workload`). Container-log queries select on the `kubernetes_*` labels below, which
+  only the log stream has.
 - `kubernetes_pod_name` changes on every restart; avoid it.
 - If a selector returns nothing, check `list_loki_label_values` over the last 24h before
   concluding the service has no logs. Absence of logs is not absence of a service.
@@ -57,12 +60,11 @@ Match status codes as quote-space-code-space: `|~ "\" 5[0-9][0-9] "`. A pattern 
 
 Default to the last 15-30 minutes around the alert's `startsAt`. Always pass a limit.
 
-## When Grafana or Loki is the broken component
+## When Grafana, Loki or fluent-bit is the broken component
 
-Every Loki tool fails or returns nothing when Grafana, Loki or fluent-bit is down. That is
-not "no errors". Use Kubernetes MCP `pods_log` (`namespace`, `name`, `tail: 50`, and
-`previous: true` for a container that just crashed) and say in the evidence that Loki was
-unavailable.
+Every Loki query fails or returns nothing new when Grafana, Loki or fluent-bit is down. That
+is not "no errors". Say in the evidence that logs and events are unavailable, and diagnose
+from Prometheus (if Grafana is up) and git.
 
 ## What is not in the logs
 
