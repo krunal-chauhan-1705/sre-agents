@@ -15,6 +15,9 @@ description: How to write the minimal Helm values change and the PR for it with 
 3. In ONE turn, write the draft to `/drafts/<chart>-<file name>` (scratch, visible to the human
    in Chat UI) and call `validate_fix` with the same arguments you will give `propose_fix_pr`.
    - `VALID`: check the rendered change is the one you intended (right object, right field).
+   - `DUPLICATE`: the same file already has an open PR, is already fixed on main, or has a fix
+     waiting for approval in another incident (one fault often raises several alerts). Stop:
+     do not call `propose_fix_pr`; report the existing fix.
    - `INVALID ... NO EFFECT`: the key path is wrong (usually missing the chart-name nesting in
      `charts/infra/*`). Fix it and validate again.
    - `INVALID ... does not render`: fix the YAML/values and validate again.

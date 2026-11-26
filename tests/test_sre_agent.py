@@ -408,3 +408,25 @@ def test_priority_drives_the_instructions():
     text = render_alert(info)
     assert "Priority: info." in text and "Do NOT delegate to fix-agent" in text
     assert "hand the fix to fix-agent" in render_alert(mixed)
+
+
+def test_pending_approval_in_another_incident_is_a_duplicate():
+    f = "charts/infra/grafana/values.yaml"
+    card = {"value": {"action_requests": [{"name": "propose_fix_pr", "args": {"file_path": f}}]}}
+    threads = [{"thread_id": "own", "interrupts": {"t": [card]}},
+               {"thread_id": "other", "interrupts": {"t": [card]}},
+               {"thread_id": "unrelated", "interrupts": {}}]
+    assert tools.pending_for(threads, f, "own") == "other"
+    assert tools.pending_for(threads[:1], f, "own") is None          # its own card doesn't count
+    assert tools.pending_for(threads, "charts/apps/pulsar/values.yaml", "own") is None
+
+
+def test_validate_fix_reports_duplicates(monkeypatch, repo):
+    monkeypatch.setattr(tools, "GITOPS_DIR", repo)
+
+    async def dup(file_path, new_content):
+        return "PR #7 already open for x"
+    monkeypatch.setattr(tools, "duplicate_of", dup)
+    new = VALUES.replace("failEvery: 3", "failEvery: 0")
+    out = asyncio.run(tools.validate_fix_tool.ainvoke({"app": "pulsar", "file_path": "charts/apps/pulsar/values.yaml", "new_content": new}))
+    assert out.startswith("DUPLICATE: PR #7 already open") and "Do NOT call propose_fix_pr" in out

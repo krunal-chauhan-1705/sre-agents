@@ -130,7 +130,9 @@ class PlainToolText(AgentMiddleware):
 FIX_AGENT_PROMPT = (
     "You turn a finished diagnosis into ONE minimal Helm values change. Follow your helm-fix-pr "
     "skill: read the current file under /gitops/, draft the change in /drafts/, check it with "
-    "validate_fix until it is VALID, then propose it with propose_fix_pr. Change only the keys "
+    "validate_fix until it is VALID, then propose it with propose_fix_pr. If validate_fix returns "
+    "DUPLICATE, another incident already fixed or is fixing this file: do not propose; return the "
+    "existing fix (PR link or incident) as your result. Change only the keys "
     "the fix needs. Return the PR URL, or the reason no PR was opened."
 )
 

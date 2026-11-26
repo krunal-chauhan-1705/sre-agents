@@ -10,6 +10,7 @@ read-only "what changed" lookup for diagnosis.
 import asyncio
 import base64
 import difflib
+import logging
 import os
 import re
 import shutil
@@ -23,6 +24,9 @@ import httpx
 import yaml
 from langchain.tools import tool
 from langgraph.config import get_config
+from langgraph_sdk import get_client
+
+log = logging.getLogger(__name__)
 
 # The sre-gitops repo is mounted read-only by a git-sync sidecar: GITOPS_ROOT is the volume,
 # GITOPS_DIR the symlink git-sync swaps atomically to each new commit of main.
@@ -162,9 +166,45 @@ async def validate_fix_tool(app: App, file_path: str, new_content: str) -> str:
     objects, or why the change is invalid (render error, or NO EFFECT when the key path is
     wrong). Same arguments as propose_fix_pr. Fix the draft and call again until it passes."""
     try:
-        return "VALID. Rendered change:\n" + await asyncio.to_thread(check_fix, app, file_path, new_content)
+        rendered = await asyncio.to_thread(check_fix, app, file_path, new_content)
     except ValueError as e:
         return f"INVALID: {e}"
+    if dup := await duplicate_of(file_path, new_content):
+        return (f"DUPLICATE: {dup}. Do NOT call propose_fix_pr. Report this existing fix (with its "
+                f"link or incident) as your result.")
+    return "VALID. Rendered change:\n" + rendered
+
+
+def pending_for(threads: list[dict], file_path: str, own_thread: str) -> str | None:
+    """Another incident whose fix for the same file is waiting for human approval."""
+    for t in threads:
+        if t["thread_id"] == own_thread:
+            continue
+        for items in (t.get("interrupts") or {}).values():
+            for it in items:
+                for req in (it.get("value") or {}).get("action_requests", []):
+                    if req.get("name") == "propose_fix_pr" and req.get("args", {}).get("file_path") == file_path:
+                        return t["thread_id"]
+    return None
+
+
+async def duplicate_of(file_path: str, new_content: str) -> str | None:
+    """Checked BEFORE the approval card exists: one fault raises several alerts (incidents), and
+    their fixes must not become several cards or PRs. Fails open (None) if a lookup errors: the
+    post-approval check in propose_fix_pr and the human still stand in the way of a duplicate."""
+    try:
+        async with httpx.AsyncClient(base_url=f"{GITHUB_API}/repos/{os.environ['GITOPS_REPO']}",
+                                     headers=github_headers(), timeout=30) as gh:
+            if why := await already_handled(gh, file_path, new_content):
+                return why
+        api = os.environ.get("AGENT_EVENTS_URL", "").rsplit("/agent-events", 1)[0]
+        threads = await get_client(url=api).threads.search(status="interrupted", limit=50)
+        own = str(get_config()["configurable"]["thread_id"])
+        if other := pending_for(threads, file_path, own):
+            return f"incident {other} already has a fix for {file_path} waiting for human approval"
+    except Exception:  # noqa: BLE001
+        log.warning("duplicate check failed for %s", file_path, exc_info=True)
+    return None
 
 
 async def already_handled(gh: httpx.AsyncClient, file_path: str, new_content: str) -> str | None:
