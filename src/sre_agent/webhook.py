@@ -62,7 +62,7 @@ def render_alert(payload: dict) -> str:
         lb, an = a.get("labels", {}), a.get("annotations", {})
         obj = next((lb[k] for k in ("pod", "deployment", "statefulset", "daemonset", "persistentvolumeclaim",
                                     "persistentvolume", "job_name", "node", "instance", "name",
-                                    "kubernetes_container_name") if lb.get(k)), None)
+                                    "kubernetes_container_name", "namespace") if lb.get(k)), None)
         where = "/".join(x for x in (obj, lb.get("container"), lb.get("reason")) if x)
         text = " - ".join(x for x in (an.get("summary"), an.get("description")) if x)
         lines.append(f"- {lb.get('alertname', '?')} [{a.get('status', '?')}] {where or 'n/a'} since {a.get('startsAt', '?')}: {text}")

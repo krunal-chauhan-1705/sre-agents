@@ -30,7 +30,9 @@ The alert message states the group's priority (the alert rule's `severity`):
 
 Alerts come from **every namespace and the node** (node, workload, storage, control-plane,
 monitoring-pipeline and Kubernetes-event alerts). Diagnose all of them; only fixable charts
-(step 4) get a PR. For everything else (node resources, `kube-system`, `argocd`, `sre-agent`, a
+(step 4) get a PR. Never call `fix-agent` for anything in namespace `sre-agent` or for
+`mcp-grafana`: that is your own runtime, deliberately fixed by humans. Report the cause and
+the human action instead. For everything else (node resources, `kube-system`, `argocd`, `sre-agent`, a
 PVC) give the root cause and the exact human action instead.
 
 
