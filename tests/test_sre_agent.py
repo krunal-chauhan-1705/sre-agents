@@ -435,3 +435,18 @@ def test_validate_fix_reports_duplicates(monkeypatch, repo):
     new = VALUES.replace("failEvery: 3", "failEvery: 0")
     out = asyncio.run(tools.validate_fix_tool.ainvoke({"app": "pulsar", "file_path": "charts/apps/pulsar/values.yaml", "new_content": new}))
     assert out.startswith("DUPLICATE: PR #7 already open") and "Do NOT call propose_fix_pr" in out
+
+
+def test_slack_diagnosis_before_card_and_pr_link_after():
+    from sre_agent import slack
+    body = ("## Alert\nAppErrorLogs\n\n## Root cause\nfailEvery set to 3 in b82b825\n\n"
+            "## Evidence\n- loki: 32 tracebacks\n\n## Change\n`faultInjection.failEvery: 3 -> 0`\n\n## Rollback\nRevert.")
+    it = {"value": {"action_requests": [{"name": "propose_fix_pr", "args": {"body": body}}]}}
+    d = slack.diagnosis_text(it)
+    assert d.startswith(":mag: *Diagnosis*") and "failEvery set to 3" in d and "32 tracebacks" in d and "Rollback" not in d
+    assert slack.diagnosis_text({"value": {"action_requests": [{"args": {}}]}}) is None
+    done = {"values": {"structured_response": {"pr_url": "https://github.com/o/r/pull/7", "summary": "s", "root_cause": "r"}}}
+    blocks, text = slack.closing({"card_blocks": [{"type": "section"}], "approved_by": "U1"}, done, "success")
+    assert "<https://github.com/o/r/pull/7|Fix PR #7>" in blocks[-1]["elements"][0]["text"] and "#7 on GitHub" in text
+    blocks, text = slack.closing({}, done, "success")   # approved in Chat UI: full result, no card
+    assert blocks is None and text.startswith(":mag: *Diagnosis*")

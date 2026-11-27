@@ -6,6 +6,7 @@ both tokens every function here is a no-op (IF-07), and approvals happen in Agen
 import json
 import logging
 import os
+import re
 
 from langgraph_sdk import get_client
 
@@ -65,6 +66,29 @@ def approval_blocks(thread_id: str, interrupt: dict) -> list[dict]:
     return blocks
 
 
+def diagnosis_text(interrupt: dict) -> str | None:
+    """The diagnosis to read BEFORE deciding: Root cause / Evidence / Change from the proposed PR
+    body (the fix-agent's helm-fix-pr template), i.e. exactly what the PR will say."""
+    body = interrupt["value"]["action_requests"][0]["args"].get("body", "")
+    keep = [f"*{t.strip()}*\n{x.strip()}" for t, _, x in (s.partition("\n") for s in re.split(r"(?m)^## ", body))
+            if t.strip() in ("Root cause", "Evidence", "Change") and x.strip()]
+    return (":mag: *Diagnosis*\n" + "\n\n".join(keep))[:2900] if keep else None
+
+
+def closing(meta: dict, thread: dict, run_status: str | None) -> tuple[list[dict] | None, str]:
+    """What a finished run posts: (new blocks for the approval card or None, thread reply).
+    After a Slack approval that opened a PR, the diagnosis is already in the thread: put the PR
+    link on the card and reply briefly. Otherwise post the full result."""
+    r = (thread.get("values") or {}).get("structured_response") or {}
+    url = r.get("pr_url")
+    if url and meta.get("card_blocks") and run_status not in ("error", "timeout"):
+        n = url.rstrip("/").rsplit("/", 1)[-1]
+        note = f":white_check_mark: Approved by <@{meta.get('approved_by', '?')}> · :link: <{url}|Fix PR #{n}>"
+        return (meta["card_blocks"] + [{"type": "context", "elements": [{"type": "mrkdwn", "text": note}]}],
+                f":link: *Fix PR:* <{url}|#{n} on GitHub>. Merge it to apply; ArgoCD syncs it.")
+    return None, result_text(thread, run_status)
+
+
 def decided_blocks(blocks: list[dict], note: str) -> list[dict]:
     """The card after a decision: buttons replaced by who decided (SL-05)."""
     return [b for b in blocks if b.get("type") != "actions"] + [
@@ -110,13 +134,19 @@ async def notify_run(thread_id: str, run_status: str | None) -> None:
         ts = (thread.get("metadata") or {}).get("slack_ts")
         if not ts:  # SL-07: Chat UI threads have no Slack thread
             return
+        channel, meta = os.environ["SLACK_CHANNEL_ID"], thread.get("metadata") or {}
         it = pending_interrupt(thread)
-        if it:
-            await _app.client.chat_postMessage(channel=os.environ["SLACK_CHANNEL_ID"], thread_ts=ts,
-                                               text="Approval needed", blocks=approval_blocks(thread_id, it))
+        if it:  # diagnosis first, so the approver can judge the card that follows
+            if diag := diagnosis_text(it):
+                await _app.client.chat_postMessage(channel=channel, thread_ts=ts, text=diag)
+            card = await _app.client.chat_postMessage(channel=channel, thread_ts=ts, text="Approval needed",
+                                                      blocks=approval_blocks(thread_id, it))
+            await get_client().threads.update(thread_id, metadata={"card_ts": card["ts"], "card_blocks": None})
         else:
-            await _app.client.chat_postMessage(channel=os.environ["SLACK_CHANNEL_ID"], thread_ts=ts,
-                                               text=result_text(thread, run_status))
+            blocks, text = closing(meta, thread, run_status)
+            if blocks and meta.get("card_ts"):
+                await _app.client.chat_update(channel=channel, ts=meta["card_ts"], text="Approved", blocks=blocks)
+            await _app.client.chat_postMessage(channel=channel, thread_ts=ts, text=text)
     except Exception:  # noqa: BLE001
         log.exception("Slack: could not report run on thread %s", thread_id)
 
@@ -160,9 +190,11 @@ def build_app(async_app_cls):
         refusal, it = await decide(v["thread_id"], v["interrupt_id"], {"type": "approve"})
         if refusal:
             return await refuse(client, channel, user, "This fix was already decided.")
+        card = [b for b in approval_blocks(v["thread_id"], it) if b.get("type") != "actions"]
         await client.chat_update(channel=channel, ts=ts, text="Approved",
-                                 blocks=decided_blocks(approval_blocks(v["thread_id"], it),
-                                                       f":white_check_mark: Approved by <@{user}>. Opening the PR…"))
+                                 blocks=decided_blocks(card, f":white_check_mark: Approved by <@{user}>. Opening the PR…"))
+        # the run's end puts the PR link on this card (closing())
+        await get_client().threads.update(v["thread_id"], metadata={"card_blocks": card, "approved_by": user})
 
     @app.action("reject_fix")
     async def on_reject(ack, body, client):
