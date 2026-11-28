@@ -61,7 +61,7 @@ def render_alert(payload: dict) -> str:
     for a in alerts[:MAX_ALERTS]:
         lb, an = a.get("labels", {}), a.get("annotations", {})
         obj = next((lb[k] for k in ("pod", "deployment", "statefulset", "daemonset", "persistentvolumeclaim",
-                                    "persistentvolume", "job_name", "node", "instance", "name",
+                                    "persistentvolume", "job_name", "application", "node", "instance", "name",
                                     "kubernetes_container_name", "namespace") if lb.get(k)), None)
         where = "/".join(x for x in (obj, lb.get("container"), lb.get("reason")) if x)
         text = " - ".join(x for x in (an.get("summary"), an.get("description")) if x)

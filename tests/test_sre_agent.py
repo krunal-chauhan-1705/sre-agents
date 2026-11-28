@@ -450,3 +450,11 @@ def test_slack_diagnosis_before_card_and_pr_link_after():
     assert "<https://github.com/o/r/pull/7|Fix PR #7>" in blocks[-1]["elements"][0]["text"] and "#7 on GitHub" in text
     blocks, text = slack.closing({}, done, "success")   # approved in Chat UI: full result, no card
     assert blocks is None and text.startswith(":mag: *Diagnosis*")
+
+
+def test_render_alert_names_the_argocd_application():
+    text = render_alert({"status": "firing", "commonLabels": {"alertname": "ArgoCDSyncFailing", "namespace": "argocd"},
+                         "alerts": [{"status": "firing", "startsAt": "x", "labels": {"alertname": "ArgoCDSyncFailing",
+                                     "namespace": "argocd", "application": "prometheus", "severity": "warning"},
+                                     "annotations": {"summary": "ArgoCD cannot sync application prometheus"}}]})
+    assert "ArgoCDSyncFailing [firing] prometheus since" in text
